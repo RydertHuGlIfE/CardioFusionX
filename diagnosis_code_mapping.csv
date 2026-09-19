@@ -1,0 +1,95 @@
+diagnosis_code,occurrence_count,diagnosis_name
+426177001,16559,Sinus Bradycardia
+426783006,8125,Sinus Rhythm
+164890007,8060,Atrial Flutter
+427084000,7255,Sinus Tachycardia
+164934002,7043,T Wave Abnormal
+55827005,5401,Unknown - Verify
+55930002,4232,Unknown - Verify
+59931005,2877,T Wave Inversion
+427393009,2550,Sinus Arrhythmia
+164889003,1780,Atrial Fibrillation
+429622005,1668,Unknown - Verify
+39732003,1545,Left Axis Deviation
+284470004,1312,Premature Atrial Contraction
+10370003,1182,Unknown - Verify
+428750005,1158,Unknown - Verify
+270492004,1140,Unknown - Verify
+713427006,1096,Unknown - Verify
+427172004,1091,Premature Ventricular Contractions
+164917005,1063,Q Wave Abnormal
+251146004,1043,Unknown - Verify
+47665007,853,Right Axis Deviation
+164930006,801,Unknown - Verify
+698252002,771,Unknown - Verify
+426761007,724,Supraventricular Tachycardia
+61721007,653,Unknown - Verify
+59118001,649,Right Bundle Branch Block
+164873001,647,Unknown - Verify
+365413008,638,Unknown - Verify
+111975006,394,Prolonged QT Interval
+6374002,385,Unknown - Verify
+445118002,380,Unknown - Verify
+428417006,366,Unknown - Verify
+713422000,297,Unknown - Verify
+17338001,294,Ventricular Premature Beats
+713426002,246,Unknown - Verify
+233917008,244,Unknown - Verify
+164909002,240,Left Bundle Branch Block
+251223006,215,Unknown - Verify
+106068003,215,Unknown - Verify
+733534002,213,Unknown - Verify
+164931005,176,Unknown - Verify
+251199005,162,Unknown - Verify
+164912004,142,Unknown - Verify
+29320008,139,Unknown - Verify
+164937009,136,Unknown - Verify
+164865005,123,Unknown - Verify
+13640000,116,Unknown - Verify
+89792004,110,Unknown - Verify
+425856008,109,Unknown - Verify
+251205003,106,Unknown - Verify
+81898007,96,Unknown - Verify
+251198002,76,Unknown - Verify
+27885002,76,Unknown - Verify
+426995002,75,Unknown - Verify
+74390002,72,Unknown - Verify
+195042002,66,Unknown - Verify
+251170000,62,Unknown - Verify
+50799005,59,Unknown - Verify
+164896001,59,Unknown - Verify
+54329005,57,Unknown - Verify
+75532003,56,Unknown - Verify
+164947007,52,Prolonged PR Interval
+57054005,49,Unknown - Verify
+446358003,36,Unknown - Verify
+67751000119106,36,Unknown - Verify
+5609005,33,Unknown - Verify
+54016002,31,Unknown - Verify
+233897008,26,Unknown - Verify
+426648003,24,Unknown - Verify
+49578007,23,Unknown - Verify
+251187003,17,Unknown - Verify
+251166008,16,Unknown - Verify
+233892002,16,Unknown - Verify
+61277005,14,Unknown - Verify
+195060002,12,Unknown - Verify
+426664006,12,Unknown - Verify
+251164006,11,Unknown - Verify
+63593006,9,Supraventricular Premature Beats
+251180001,8,Unknown - Verify
+446813000,8,Unknown - Verify
+17366009,7,Unknown - Verify
+426627000,7,Unknown - Verify
+111288001,7,Unknown - Verify
+426183003,7,Unknown - Verify
+251120003,6,Unknown - Verify
+65778007,5,Unknown - Verify
+445211001,5,Unknown - Verify
+418818005,5,Unknown - Verify
+251173003,3,Unknown - Verify
+164942001,3,Unknown - Verify
+11157007,3,Unknown - Verify
+195101003,2,Unknown - Verify
+77867006,2,Unknown - Verify
+67741000119109,1,Unknown - Verify

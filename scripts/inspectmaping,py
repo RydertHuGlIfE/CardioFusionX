@@ -1,0 +1,30 @@
+from pathlib import Path
+import pandas as pd
+
+ROOT = Path("ecg-arrhythmia-data")
+
+# Find official mapping files
+mapping_files = list(ROOT.rglob("*ConditionNames*"))
+
+print("Found files:")
+
+for file in mapping_files:
+    print(file)
+
+if not mapping_files:
+    print("Mapping file not found!")
+    exit()
+
+# Select first matching file
+mapping_path = mapping_files[0]
+
+print("\nReading:", mapping_path)
+
+# Load CSV
+df = pd.read_csv(mapping_path)
+
+print("\nColumn names:")
+print(df.columns.tolist())
+
+print("\nFirst 10 rows:")
+print(df.head(10).to_string(index=False))

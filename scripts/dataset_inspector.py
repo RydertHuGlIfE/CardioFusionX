@@ -4,8 +4,8 @@ from scipy.io import loadmat
 
 ROOT = pathlib.Path("ecg-arrhythmia-data")
 
-mat_files = sorted(ROOT.rglob("*.mat"))
-hea_files = sorted(ROOT.rglob("*.hea"))
+mat_files = sorted(ROOT.glob("*.mat"))   #find files recursviley
+hea_files = sorted(ROOT.glob("*.hea"))
 
 print(f"Mat files: {len(mat_files)}")
 print(f"Hea files: {len(hea_files)}")
@@ -14,12 +14,12 @@ if not mat_files:
     raise FileNotFoundError(f"No .mat files found under {ROOT.resolve()}")
 
 mat_file = mat_files[0]
-hea_file = hea_files[0] if hea_files else None
+hea_file = hea_files[0]
 
 
 #print some content :D
 print(f"Mat file: {mat_file}")
-print(f"Hea file: {hea_file or 'None found'}")
+print(f"Hea file: {hea_file}")
 
 print(f"Mat file content")
 
