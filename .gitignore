@@ -71,6 +71,9 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+#adding dataset 
+ecg-arrhythmia-data/
+
 # PyBuilder
 .pybuilder/
 target/
