@@ -27,7 +27,10 @@ DEVICE = torch.device(
 
 print("Using device:", DEVICE)
 
-test_dataset = ECGDataset("test_split.csv")
+PROJECT_ROOT = Path(__file__).resolve().parent
+EXPERIMENT_ROOT = PROJECT_ROOT / "experiments"
+
+test_dataset = ECGDataset(PROJECT_ROOT / "test_split.csv")
 
 test_loader = DataLoader(
     test_dataset,
@@ -37,6 +40,27 @@ test_loader = DataLoader(
 )
 
 label_names = test_dataset.label_columns
+NUM_CLASSES = 94
+
+
+def verify_label_schema(datasets):
+    reference_name, reference = datasets[0]
+    for name, dataset in datasets[1:]:
+        if dataset.label_columns != reference.label_columns:
+            raise ValueError(
+                f"Label columns differ between {reference_name} and {name}."
+            )
+
+
+train_dataset = ECGDataset(PROJECT_ROOT / "train_split.csv")
+val_dataset = ECGDataset(PROJECT_ROOT / "val_split.csv")
+verify_label_schema([
+    ("train", train_dataset),
+    ("validation", val_dataset),
+    ("test", test_dataset),
+])
+if len(label_names) != NUM_CLASSES:
+    raise ValueError(f"Expected {NUM_CLASSES} labels, found {len(label_names)}")
 
 
 def load_thresholds(thresholds_path):
@@ -65,8 +89,8 @@ def load_thresholds(thresholds_path):
     return thresholds
 
 
-def load_model(model_path):
-    model = ECGCNN(num_classes=94).to(DEVICE)
+def load_model(model_path, require_residual_focal=False):
+    model = ECGCNN(num_classes=NUM_CLASSES).to(DEVICE)
 
     checkpoint = torch.load(
         model_path,
@@ -74,13 +98,29 @@ def load_model(model_path):
         weights_only=False
     )
 
+    checkpoint_epoch = None
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        config = checkpoint.get("config", {})
+        if (
+            "num_classes" in config
+            and config["num_classes"] != NUM_CLASSES
+        ):
+            raise ValueError("Checkpoint class count does not match 94 labels.")
+        if require_residual_focal and config.get("experiment") != "residual_focal":
+            raise ValueError(
+                "This evaluation requires a residual_focal checkpoint."
+            )
+        checkpoint_epoch = checkpoint.get("epoch")
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
+        if require_residual_focal:
+            raise ValueError(
+                "Residual-Focal checkpoint metadata is missing."
+            )
         model.load_state_dict(checkpoint)
 
     model.eval()
-    return model
+    return model, checkpoint_epoch
 
 
 def save_confusion_matrix_image(matrix, label, output_path):
@@ -177,7 +217,12 @@ def save_combined_confusion_matrix(
     plt.close(fig)
 
 
-def evaluate_model(model_path, output_dir, thresholds_path=None):
+def evaluate_model(
+    model_path,
+    output_dir,
+    thresholds_path=None,
+    require_residual_focal=False,
+):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -194,7 +239,10 @@ def evaluate_model(model_path, output_dir, thresholds_path=None):
     print(f"\nEvaluating: {model_path}")
     print(f"Threshold mode: {threshold_mode}")
 
-    model = load_model(model_path)
+    model, checkpoint_epoch = load_model(
+        model_path,
+        require_residual_focal=require_residual_focal,
+    )
 
     all_labels = []
     all_predictions = []
@@ -225,6 +273,16 @@ def evaluate_model(model_path, output_dir, thresholds_path=None):
     y_pred = np.concatenate(all_predictions)
     y_prob = np.concatenate(all_probabilities)
 
+    per_label_f1 = f1_score(
+        y_true,
+        y_pred,
+        average=None,
+        zero_division=0,
+    )
+    support = y_true.sum(axis=0)
+    support_10 = support >= 10
+    support_20 = support >= 20
+
     metrics = {
         "subset_accuracy": accuracy_score(y_true, y_pred),
         "label_accuracy": np.mean(y_true == y_pred),
@@ -245,7 +303,19 @@ def evaluate_model(model_path, output_dir, thresholds_path=None):
         ),
         "micro_f1": f1_score(
             y_true, y_pred, average="micro", zero_division=0
-        )
+        ),
+        "macro_f1_support_ge_10": (
+            float(per_label_f1[support_10].mean())
+            if support_10.any()
+            else 0.0
+        ),
+        "macro_f1_support_ge_20": (
+            float(per_label_f1[support_20].mean())
+            if support_20.any()
+            else 0.0
+        ),
+        "labels_predicted": int((y_pred.sum(axis=0) > 0).sum()),
+        "labels_never_predicted": int((y_pred.sum(axis=0) == 0).sum()),
     }
 
     pd.DataFrame([metrics]).to_json(
@@ -253,6 +323,17 @@ def evaluate_model(model_path, output_dir, thresholds_path=None):
         orient="records",
         indent=4
     )
+
+    evaluation_metadata = {
+        "model_path": str(model_path),
+        "checkpoint_epoch": checkpoint_epoch,
+        "threshold_mode": threshold_mode,
+        "thresholds_path": str(thresholds_path) if thresholds_path else None,
+        "number_of_test_samples": len(test_dataset),
+        "number_of_labels": len(label_names),
+    }
+    with (output_dir / "evaluation_metadata.json").open("w") as metadata_file:
+        json.dump(evaluation_metadata, metadata_file, indent=2)
 
     report = classification_report(
         y_true,
@@ -336,22 +417,69 @@ def evaluate_model(model_path, output_dir, thresholds_path=None):
     print("Individual confusion matrices:", image_dir)
 
 
-evaluate_model(
+def evaluate_if_available(
+    model_path,
+    output_dir,
+    thresholds_path=None,
+    require_residual_focal=False,
+):
+    model_path = Path(model_path)
+    if not model_path.exists():
+        print(f"WARNING: checkpoint not found, skipping: {model_path}")
+        return
+    if thresholds_path is not None and not Path(thresholds_path).exists():
+        print(
+            f"WARNING: thresholds not found, skipping tuned evaluation: "
+            f"{thresholds_path}"
+        )
+        return
+    evaluate_model(
+        model_path,
+        output_dir,
+        thresholds_path=thresholds_path,
+        require_residual_focal=require_residual_focal,
+    )
+
+
+evaluate_if_available(
     "experiments/latest/model.pth",
     "experiments/evaluation/latest_fixed",
     thresholds_path=None
 )
 
-evaluate_model(
+evaluate_if_available(
     "experiments/best/model.pth",
     "experiments/evaluation/best_tuned",
     thresholds_path="experiments/best/thresholds.json"
 )
 
-evaluate_model(
+evaluate_if_available(
     "experiments/best/model.pth",
     "experiments/evaluation/best_fixed",
     thresholds_path=None
 )
 
-print("\nBoth models evaluated successfully!")
+evaluate_if_available(
+    EXPERIMENT_ROOT / "residual_focal_latest/model.pth",
+    EXPERIMENT_ROOT / "evaluation/residual_focal_latest_fixed",
+    thresholds_path=None,
+    require_residual_focal=True,
+)
+
+evaluate_if_available(
+    EXPERIMENT_ROOT / "residual_focal_best/model.pth",
+    EXPERIMENT_ROOT / "evaluation/residual_focal_best_fixed",
+    thresholds_path=None,
+    require_residual_focal=True,
+)
+
+evaluate_if_available(
+    EXPERIMENT_ROOT / "residual_focal_best/model.pth",
+    EXPERIMENT_ROOT / "evaluation/residual_focal_best_tuned",
+    thresholds_path=(
+        EXPERIMENT_ROOT / "residual_focal_best/thresholds.json"
+    ),
+    require_residual_focal=True,
+)
+
+print("\nEvaluation complete.")
