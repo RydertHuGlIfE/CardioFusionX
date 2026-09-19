@@ -1,0 +1,12 @@
+[
+    {
+        "subset_accuracy":0.0965598701,
+        "label_accuracy":0.9610217038,
+        "macro_precision":0.137269154,
+        "macro_recall":0.4092750612,
+        "macro_f1":0.1935687394,
+        "micro_precision":0.3270172067,
+        "micro_recall":0.8191049267,
+        "micro_f1":0.4674220963
+    }
+]

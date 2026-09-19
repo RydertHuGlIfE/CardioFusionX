@@ -1,4 +1,4 @@
-#cnn+dataloader
+#cnn+dataloader - made 94 outputneurons for 94 diag, 12 leads, 5000 samples, batchsize=4
 
 import torch
 import torch.nn as nn
