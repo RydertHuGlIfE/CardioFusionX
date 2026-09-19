@@ -68,6 +68,9 @@ instance/
 # Scrapy stuff:
 .scrapy
 
+#addingn dataset to gitignore
+ecg-arrhythmia-data/
+
 # Sphinx documentation
 docs/_build/
 
