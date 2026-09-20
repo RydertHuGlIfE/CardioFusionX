@@ -27,7 +27,7 @@ from model import ECGCNN
 SEED = 42
 BATCH_SIZE = 16
 EPOCHS = 30
-LEARNING_RATE = 0.00136
+LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 1e-4
 FOCAL_GAMMA = 2.0
 SCHEDULER_PATIENCE = 3
@@ -269,7 +269,10 @@ def main():
                 raise ValueError("NaN or Inf in training output or loss.")
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), GRADIENT_CLIP_MAX_NORM)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(),
+                max_norm=1.0,
+            )
             grad_value = float(grad_norm.item())
             if not np.isfinite(grad_value):
                 raise ValueError("NaN or Inf in gradients.")
