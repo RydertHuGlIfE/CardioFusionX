@@ -112,6 +112,29 @@ def check_batch_finite(signals, labels, split_name):
         raise ValueError(f"NaN or Inf found in {split_name} batch.")
 
 
+def gradient_diagnostics(model):
+    nonfinite_parameters = 0
+    maximum_finite_gradient = None
+
+    for parameter in model.parameters():
+        if parameter.grad is None:
+            continue
+        finite_values = parameter.grad.detach()[
+            torch.isfinite(parameter.grad.detach())
+        ]
+        if finite_values.numel() != parameter.grad.numel():
+            nonfinite_parameters += 1
+        if finite_values.numel() > 0:
+            finite_maximum = finite_values.abs().max().item()
+            if (
+                maximum_finite_gradient is None
+                or finite_maximum > maximum_finite_gradient
+            ):
+                maximum_finite_gradient = finite_maximum
+
+    return nonfinite_parameters, maximum_finite_gradient
+
+
 def tune_thresholds(y_true, y_prob, label_names):
     thresholds = {}
     rows = []
@@ -254,6 +277,7 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         model.train()
         total_loss, grad_total, clipped = 0.0, 0.0, 0
+        nonfinite_gradient_batches = 0
         for batch_idx, (signals, labels) in enumerate(tqdm(
             train_loader,
             desc=f"Epoch {epoch}/{EPOCHS} Train",
@@ -279,14 +303,32 @@ def main():
                 continue
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
+            nonfinite_parameters, maximum_finite_gradient = gradient_diagnostics(model)
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(),
                 max_norm=1.0,
             )
             grad_value = float(grad_norm.item())
-            if not np.isfinite(grad_value):
-                print(f"Skipping non-finite gradients at batch {batch_idx}")
+            if nonfinite_parameters > 0 or not np.isfinite(grad_value):
+                nonfinite_gradient_batches += 1
+                input_min = signals.detach().min().item()
+                input_max = signals.detach().max().item()
+                output_min = outputs.detach().min().item()
+                output_max = outputs.detach().max().item()
+                print(
+                    f"Non-finite gradients | epoch={epoch} "
+                    f"batch={batch_idx} | input_min={input_min} "
+                    f"input_max={input_max} | output_min={output_min} "
+                    f"output_max={output_max} | loss={loss.item()} | "
+                    f"nonfinite_gradient_parameters={nonfinite_parameters} | "
+                    f"maximum_finite_gradient={maximum_finite_gradient}"
+                )
                 optimizer.zero_grad(set_to_none=True)
+                if nonfinite_gradient_batches > 5:
+                    raise RuntimeError(
+                        f"Non-finite gradients occurred more than 5 times "
+                        f"in epoch {epoch}."
+                    )
                 continue
             grad_total += grad_value
             clipped += int(grad_value > GRADIENT_CLIP_MAX_NORM)
