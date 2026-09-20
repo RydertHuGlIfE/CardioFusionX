@@ -37,6 +37,7 @@ NUM_CLASSES = 94
 SIGNAL_LENGTH = 5000
 MIN_PRECISION_AT_LOW_THRESHOLD = 0.50
 THRESHOLD_CANDIDATES = np.round(np.arange(0.05, 0.951, 0.05), 2)
+AMP_ENABLED = False
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -239,7 +240,10 @@ def main():
     criterion = FocalLoss(FOCAL_GAMMA, pos_weight.to(DEVICE))
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=SCHEDULER_PATIENCE)
-    scaler = GradScaler("cuda", enabled=DEVICE.type == "cuda")
+    scaler = GradScaler(
+        "cuda",
+        enabled=AMP_ENABLED and DEVICE.type == "cuda",
+    )
     best_values = {"macro_f1": -np.inf, "micro_f1": -np.inf, "macro_recall": -np.inf, "val_loss": np.inf}
     patience_count = 0
     config = {"seed": SEED, "batch_size": BATCH_SIZE, "epochs": EPOCHS, "learning_rate": LEARNING_RATE, "weight_decay": WEIGHT_DECAY, "optimizer": "AdamW", "focal_gamma": FOCAL_GAMMA, "pos_weight_max": 20, "scheduler": "ReduceLROnPlateau(mode='max', factor=0.5)", "checkpoint_selection": "validation tuned macro_f1", "threshold_data": "validation only", "augmentation": "disabled to preserve ECG morphology", "experiment": "optimized_v1", "num_classes": NUM_CLASSES, "label_names": label_names, "focal_loss_formulation": "weighted_bce=BCEWithLogitsLoss(pos_weight,reduction='none'); pt=sigmoid(logit)*y+(1-sigmoid(logit))*(1-y); loss=mean((1-pt)^gamma*weighted_bce)"}
@@ -250,23 +254,29 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         model.train()
         total_loss, grad_total, clipped = 0.0, 0.0, 0
-        for signals, labels in tqdm(
+        for batch_idx, (signals, labels) in enumerate(tqdm(
             train_loader,
             desc=f"Epoch {epoch}/{EPOCHS} Train",
             dynamic_ncols=True,
             leave=True,
-        ):
+        )):
             check_batch_finite(signals, labels, "train")
             signals, labels = signals.to(DEVICE), labels.to(DEVICE)
+            if not torch.isfinite(signals).all():
+                print(f"Skipping non-finite input at batch {batch_idx}")
+                optimizer.zero_grad(set_to_none=True)
+                continue
             optimizer.zero_grad(set_to_none=True)
             with autocast(
                 device_type=DEVICE.type,
-                enabled=scaler.is_enabled(),
+                enabled=AMP_ENABLED and scaler.is_enabled(),
             ):
                 outputs, loss = model(signals), None
                 loss = criterion(outputs, labels)
-            if not torch.isfinite(outputs).all() or not torch.isfinite(loss):
-                raise ValueError("NaN or Inf in training output or loss.")
+            if not torch.isfinite(loss):
+                print(f"Skipping non-finite loss at batch {batch_idx}")
+                optimizer.zero_grad(set_to_none=True)
+                continue
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -275,7 +285,9 @@ def main():
             )
             grad_value = float(grad_norm.item())
             if not np.isfinite(grad_value):
-                raise ValueError("NaN or Inf in gradients.")
+                print(f"Skipping non-finite gradients at batch {batch_idx}")
+                optimizer.zero_grad(set_to_none=True)
+                continue
             grad_total += grad_value
             clipped += int(grad_value > GRADIENT_CLIP_MAX_NORM)
             scaler.step(optimizer)
