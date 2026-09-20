@@ -16,7 +16,7 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -183,10 +183,18 @@ def collect_predictions(model, loader, criterion, split_name, scaler):
     model.eval()
     losses, labels, probabilities = [], [], []
     with torch.no_grad():
-        for signals, batch_labels in loader:
+        for signals, batch_labels in tqdm(
+            loader,
+            desc=f"{split_name.title()} evaluation",
+            dynamic_ncols=True,
+            leave=True,
+        ):
             check_batch_finite(signals, batch_labels, split_name)
             signals, batch_labels = signals.to(DEVICE), batch_labels.to(DEVICE)
-            with autocast(enabled=scaler.is_enabled()):
+            with autocast(
+                device_type=DEVICE.type,
+                enabled=scaler.is_enabled(),
+            ):
                 outputs = model(signals)
                 loss = criterion(outputs, batch_labels)
             if not torch.isfinite(outputs).all() or not torch.isfinite(loss):
@@ -231,7 +239,7 @@ def main():
     criterion = FocalLoss(FOCAL_GAMMA, pos_weight.to(DEVICE))
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=SCHEDULER_PATIENCE)
-    scaler = GradScaler(enabled=DEVICE.type == "cuda")
+    scaler = GradScaler("cuda", enabled=DEVICE.type == "cuda")
     best_values = {"macro_f1": -np.inf, "micro_f1": -np.inf, "macro_recall": -np.inf, "val_loss": np.inf}
     patience_count = 0
     config = {"seed": SEED, "batch_size": BATCH_SIZE, "epochs": EPOCHS, "learning_rate": LEARNING_RATE, "weight_decay": WEIGHT_DECAY, "optimizer": "AdamW", "focal_gamma": FOCAL_GAMMA, "pos_weight_max": 20, "scheduler": "ReduceLROnPlateau(mode='max', factor=0.5)", "checkpoint_selection": "validation tuned macro_f1", "threshold_data": "validation only", "augmentation": "disabled to preserve ECG morphology", "experiment": "optimized_v1", "num_classes": NUM_CLASSES, "label_names": label_names, "focal_loss_formulation": "weighted_bce=BCEWithLogitsLoss(pos_weight,reduction='none'); pt=sigmoid(logit)*y+(1-sigmoid(logit))*(1-y); loss=mean((1-pt)^gamma*weighted_bce)"}
@@ -242,11 +250,19 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         model.train()
         total_loss, grad_total, clipped = 0.0, 0.0, 0
-        for signals, labels in tqdm(train_loader, desc=f"Epoch {epoch}/{EPOCHS} Train"):
+        for signals, labels in tqdm(
+            train_loader,
+            desc=f"Epoch {epoch}/{EPOCHS} Train",
+            dynamic_ncols=True,
+            leave=True,
+        ):
             check_batch_finite(signals, labels, "train")
             signals, labels = signals.to(DEVICE), labels.to(DEVICE)
             optimizer.zero_grad(set_to_none=True)
-            with autocast(enabled=scaler.is_enabled()):
+            with autocast(
+                device_type=DEVICE.type,
+                enabled=scaler.is_enabled(),
+            ):
                 outputs, loss = model(signals), None
                 loss = criterion(outputs, labels)
             if not torch.isfinite(outputs).all() or not torch.isfinite(loss):
