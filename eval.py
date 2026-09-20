@@ -433,12 +433,18 @@ def evaluate_if_available(
             f"{thresholds_path}"
         )
         return
-    evaluate_model(
-        model_path,
-        output_dir,
-        thresholds_path=thresholds_path,
-        require_residual_focal=require_residual_focal,
-    )
+    try:
+        evaluate_model(
+            model_path,
+            output_dir,
+            thresholds_path=thresholds_path,
+            require_residual_focal=require_residual_focal,
+        )
+    except RuntimeError as error:
+        print(
+            f"WARNING: could not load checkpoint, skipping: {model_path}\n"
+            f"Reason: {error}"
+        )
 
 
 evaluate_if_available(

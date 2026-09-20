@@ -1,0 +1,16 @@
+[
+    {
+        "subset_accuracy":0.3255573601,
+        "label_accuracy":0.9793862363,
+        "macro_precision":0.2559441754,
+        "macro_recall":0.3831252837,
+        "macro_f1":0.2778780297,
+        "micro_precision":0.5042178482,
+        "micro_recall":0.7687852576,
+        "micro_f1":0.6090091164,
+        "macro_f1_support_ge_10":0.4175494026,
+        "macro_f1_support_ge_20":0.4539428021,
+        "labels_predicted":87,
+        "labels_never_predicted":7
+    }
+]

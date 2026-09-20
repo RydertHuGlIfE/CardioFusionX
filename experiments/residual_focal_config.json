@@ -1,0 +1,21 @@
+{
+  "seed": 42,
+  "batch_size": 16,
+  "epochs": 50,
+  "learning_rate": 0.00257,
+  "focal_gamma": 2.0,
+  "scheduler_patience": 3,
+  "early_stopping_patience": 8,
+  "gradient_clip_max_norm": 1.0,
+  "num_classes": 94,
+  "signal_shape": [
+    12,
+    5000
+  ],
+  "device": "cpu",
+  "loss": "FocalLoss + BCEWithLogitsLoss(pos_weight)",
+  "focal_loss_formulation": "bce = BCEWithLogitsLoss(pos_weight, reduction='none'); p = sigmoid(logits); pt = p*y + (1-p)*(1-y); loss = mean((1-pt)^gamma * bce)",
+  "train_dataset": "train_split.csv",
+  "validation_dataset": "val_split.csv",
+  "experiment": "residual_focal"
+}
