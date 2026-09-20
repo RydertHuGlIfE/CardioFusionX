@@ -3,3 +3,7 @@ torch
 numpy
 scipy
 pytest
+pandas
+scikit-learn
+joblib
+matplotlib

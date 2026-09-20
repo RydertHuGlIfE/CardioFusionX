@@ -10,6 +10,7 @@ from inference import InputValidationError, normalize_signal, predict_signal, pr
 from model_loader import ModelConfigurationError, load_model, load_thresholds
 from robustness import apply_noise, changed_labels
 from signal_quality import analyze_signal
+from patient_history import load_history_artifact, PatientHistoryError, predict_history
 
 
 app = Flask(__name__)
@@ -23,9 +24,10 @@ except Exception as exc:
     LABELS, MAPPING, CONFIG_ERROR = [], {}, str(exc)
 
 STATS = {"uploaded": 0, "processed": 0, "predictions": 0}
+HISTORY_MODEL, HISTORY_INFO = load_history_artifact()
 
 
-def render_dashboard(error=None, result=None, signal=None, quality=None):
+def render_dashboard(error=None, result=None, signal=None, quality=None, history_result=None, history_error=None):
     return render_template(
         "index.html",
         error=error,
@@ -37,6 +39,9 @@ def render_dashboard(error=None, result=None, signal=None, quality=None):
         lead_names=LEAD_NAMES,
         sample_rate=SAMPLE_RATE,
         config_error=CONFIG_ERROR,
+        history_info=HISTORY_INFO,
+        history_result=history_result,
+        history_error=history_error,
     )
 
 
@@ -64,6 +69,23 @@ def index():
     except Exception:
         app.logger.exception("Unexpected ECG processing failure")
         return render_dashboard("The ECG could not be processed. Check the file and server logs.")
+
+
+@app.post("/predict-history")
+def predict_history_route():
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict()
+    if HISTORY_MODEL is None:
+        message = HISTORY_INFO.get("message", "Patient-history model is unavailable.")
+        return jsonify({"error": message, "module": "patient_history"}), 503
+    try:
+        return jsonify(predict_history(HISTORY_MODEL, payload))
+    except PatientHistoryError as exc:
+        return jsonify({"error": str(exc), "module": "patient_history"}), 400
+    except Exception:
+        app.logger.exception("Patient-history prediction failure")
+        return jsonify({"error": "Patient history could not be processed.", "module": "patient_history"}), 500
 
 
 @app.post("/api/stress-test")
