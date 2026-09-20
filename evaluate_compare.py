@@ -183,13 +183,13 @@ def print_comparison_table(metrics_orig, metrics_new, title="EVALUATION COMPARIS
 def main():
     parser = argparse.ArgumentParser(description="Full Test-Set Evaluation and Comparative Benchmark")
     parser.add_argument("--new-model", type=str,
-                        default="experiments/final_training_v1/best_macro_f1/model.pth",
+                        default="experiments/targeted_finetune_v1/best_macro_f1/model.pth",
                         help="Path to new model checkpoint")
     parser.add_argument("--new-thresh", type=str,
-                        default="experiments/final_training_v1/best_macro_f1/thresholds.json",
+                        default="experiments/targeted_finetune_v1/best_macro_f1/thresholds.json",
                         help="Path to new model tuned thresholds")
     parser.add_argument("--new-cons-thresh", type=str,
-                        default="experiments/final_training_v1/best_macro_f1/conservative_thresholds.json",
+                        default="experiments/targeted_finetune_v1/best_macro_f1/conservative_thresholds.json",
                         help="Path to new model conservative thresholds")
     parser.add_argument("--orig-model", type=str,
                         default="experiments/optimized_v1/best_macro_f1/model.pth",

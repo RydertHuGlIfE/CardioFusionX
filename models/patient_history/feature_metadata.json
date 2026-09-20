@@ -1,0 +1,90 @@
+{
+  "dataset": "UCI Heart Disease / processed Cleveland, Hungarian, Switzerland, VA files",
+  "source_directory": "/run/media/Ryder/Coding/Coding/CardioFusionX/heart+disease",
+  "source_files": {
+    "processed.cleveland.data": 303,
+    "processed.hungarian.data": 294,
+    "processed.switzerland.data": 123,
+    "processed.va.data": 200
+  },
+  "rows": 920,
+  "features": [
+    "age",
+    "sex",
+    "cp",
+    "trestbps",
+    "chol",
+    "fbs",
+    "restecg",
+    "thalach",
+    "exang",
+    "oldpeak",
+    "slope",
+    "ca",
+    "thal"
+  ],
+  "original_target": "num",
+  "original_target_values": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "target_definition": "Original UCI num: 0=no angiographic disease, 1-4=presence; model target is num > 0.",
+  "missing_tokens": [
+    "?",
+    "-9",
+    "-9.0"
+  ],
+  "missing_values_after_parse": {
+    "age": 0,
+    "sex": 0,
+    "cp": 0,
+    "trestbps": 59,
+    "chol": 30,
+    "fbs": 90,
+    "restecg": 2,
+    "thalach": 55,
+    "exang": 55,
+    "oldpeak": 62,
+    "slope": 309,
+    "ca": 611,
+    "thal": 486
+  },
+  "feature_names": [
+    "age",
+    "sex",
+    "cp",
+    "trestbps",
+    "chol",
+    "fbs",
+    "restecg",
+    "thalach",
+    "exang",
+    "oldpeak",
+    "slope",
+    "ca",
+    "thal"
+  ],
+  "numeric_features": [
+    "age",
+    "trestbps",
+    "chol",
+    "thalach",
+    "oldpeak"
+  ],
+  "categorical_features": [
+    "sex",
+    "cp",
+    "fbs",
+    "restecg",
+    "exang",
+    "slope",
+    "ca",
+    "thal"
+  ],
+  "display_target": "Model-estimated cardiac risk",
+  "supports_free_text_symptoms": false,
+  "trained_at_utc": "2026-09-20T19:01:31.379642+00:00"
+}
