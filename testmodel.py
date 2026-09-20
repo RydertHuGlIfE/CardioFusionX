@@ -1,483 +1,284 @@
-
 import argparse
 import json
-import random
 from pathlib import Path
+import random
 
 import numpy as np
+import pandas as pd
 import torch
 
 from eng_dataset import ECGDataset
-from model import ECGCNN
+from model import get_model, ECGCNN
 
-
-# =========================
-# CONFIG
-# =========================
 
 NUM_CLASSES = 94
 NUM_LEADS = 12
 SIGNAL_LENGTH = 5000
-
-DEVICE = torch.device(
-    "cuda" if torch.cuda.is_available() else "cpu"
-)
-
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-MODEL_PATH = (
-    PROJECT_ROOT
-    / "experiments/optimized_v1/best_macro_f1/model.pth"
-)
 
-THRESHOLDS_PATH = (
-    PROJECT_ROOT
-    / "experiments/optimized_v1/best_macro_f1/conservative_thresholds.json"
-)
+def load_diagnosis_mapping():
+    """Maps SNOMED diagnosis codes and label keys to human-readable names."""
+    mapping = {}
+    csv_path = PROJECT_ROOT / "diagnosis_code_mapping.csv"
+    if csv_path.is_file():
+        try:
+            df = pd.read_csv(csv_path)
+            for _, row in df.iterrows():
+                code = str(row.get("diagnosis_code", "")).strip()
+                name = str(row.get("diagnosis_name", "")).strip()
+                if code and name:
+                    mapping[code] = name
+                    mapping[f"label_{code}"] = name
+        except Exception:
+            pass
+    return mapping
 
-DATASET_PATH = PROJECT_ROOT / "test_split.csv"
+
+def get_label_display_name(label_key, mapping):
+    clean_code = str(label_key).replace("label_", "")
+    return mapping.get(label_key, mapping.get(clean_code, label_key))
 
 
-# =========================
-# LOAD THRESHOLDS
-# =========================
-
-def load_thresholds(label_names, thresholds_path):
-    if not thresholds_path.exists():
-        raise FileNotFoundError(
-            f"Threshold file does not exist: {thresholds_path}"
-        )
-
-    with thresholds_path.open("r") as file:
-        threshold_data = json.load(file)
-
-    missing = [
-        label for label in label_names
-        if label not in threshold_data
+def resolve_default_model():
+    candidates = [
+        PROJECT_ROOT / "experiments/final_training_v1/best_macro_f1/model.pth",
+        PROJECT_ROOT / "experiments/optimized_v1/best_macro_f1/model.pth",
+        PROJECT_ROOT / "experiments/targeted_finetune_v1/best_macro_f1/model.pth",
     ]
-
-    if missing:
-        raise ValueError(
-            f"Missing thresholds: {missing}"
-        )
-
-    return np.array(
-        [
-            float(threshold_data[label])
-            for label in label_names
-        ],
-        dtype=np.float32
-    )
+    for c in candidates:
+        if c.is_file():
+            return c
+    return candidates[1]
 
 
-# =========================
-# LOAD MODEL
-# =========================
+def resolve_threshold_file(model_path, mode="tuned", custom_thresh=None):
+    if custom_thresh and Path(custom_thresh).is_file():
+        return Path(custom_thresh)
 
-def load_model(label_names, model_path):
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"Model checkpoint does not exist: {model_path}"
-        )
+    model_dir = Path(model_path).parent
+    filename = "thresholds.json" if mode == "tuned" else "conservative_thresholds.json"
+    candidate = model_dir / filename
+    if candidate.is_file():
+        return candidate
 
-    model = ECGCNN(
-        num_classes=NUM_CLASSES
-    ).to(DEVICE)
+    # Fallback to model_dir's thresholds.json or global fallback
+    if (model_dir / "thresholds.json").is_file():
+        return model_dir / "thresholds.json"
+    return candidate
 
-    checkpoint = torch.load(
-        model_path,
-        map_location=DEVICE,
-        weights_only=False
-    )
 
-    if not isinstance(checkpoint, dict):
-        raise ValueError(
-            "Invalid checkpoint format."
-        )
+def load_thresholds(label_names, thresholds_path, default_val=0.50):
+    p = Path(thresholds_path)
+    if not p.is_file():
+        print(f"Warning: Threshold file not found ({p}). Using default {default_val} across all labels.")
+        return np.full(len(label_names), default_val, dtype=np.float32)
 
-    config = checkpoint.get("config", {})
+    with p.open() as f:
+        data = json.load(f)
 
-    if config.get("experiment") != "optimized_v1":
-        raise ValueError(
-            "This is not an optimized_v1 checkpoint."
-        )
+    return np.array([float(data.get(l, default_val)) for l in label_names], dtype=np.float32)
 
-    if config.get("num_classes") != NUM_CLASSES:
-        raise ValueError(
-            f"Checkpoint class count does not match {NUM_CLASSES}."
-        )
 
-    checkpoint_labels = checkpoint.get("label_names")
-    if checkpoint_labels != label_names:
-        raise ValueError(
-            "Checkpoint label order does not match the dataset label order."
-        )
+def load_model(model_path, label_names):
+    p = Path(model_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Model checkpoint does not exist: {p}")
+
+    ckpt = torch.load(p, map_location=DEVICE, weights_only=False)
+    state_dict = ckpt.get("model_state_dict", ckpt)
+    arch = ckpt.get("architecture", ckpt.get("config", {}).get("architecture", "ecg_cnn"))
 
     try:
-        model.load_state_dict(checkpoint["model_state_dict"])
-    except RuntimeError as error:
-        raise ValueError(
-            "Checkpoint architecture is incompatible with model.py."
-        ) from error
+        model = get_model(arch, num_classes=len(label_names))
+        model.load_state_dict(state_dict)
+    except Exception:
+        model = ECGCNN(num_classes=len(label_names))
+        model.load_state_dict(state_dict)
 
+    model.to(DEVICE)
     model.eval()
 
-    print(
-        "Loaded checkpoint epoch:",
-        checkpoint.get("epoch", "unknown")
-    )
-
+    epoch = ckpt.get("epoch", "unknown") if isinstance(ckpt, dict) else "unknown"
+    print(f"Loaded checkpoint: {p.name} (Epoch: {epoch}, Architecture: {arch})")
     return model
 
 
-# =========================
-# EXTRACT DATASET SAMPLE
-# =========================
-
-def extract_sample(sample):
-    """
-    Supports common dataset formats:
-
-    (signal, labels)
-    (signal, labels, metadata)
-    """
-
-    if not isinstance(sample, (tuple, list)):
-        raise ValueError(
-            "Unexpected dataset sample format."
-        )
-
-    signal = sample[0]
-    actual_labels = sample[1]
-
-    return signal, actual_labels
-
-
-# =========================
-# CONVERT ACTUAL LABELS
-# =========================
-
-def get_actual_labels(actual_labels, label_names):
-    """
-    Converts multi-hot labels into label names.
-    """
-
-    if torch.is_tensor(actual_labels):
-        actual_labels = actual_labels.detach().cpu().numpy()
-
-    actual_labels = np.asarray(actual_labels)
-
-    # Multi-hot vector: [94]
-    if actual_labels.ndim == 1:
-        if len(actual_labels) != len(label_names):
-            raise ValueError(
-                "Actual label count does not match label count."
-            )
-
-        return {
-            label_names[i]
-            for i in range(len(label_names))
-            if actual_labels[i] > 0.5
-        }
-
-    # Already a list of names
-    if actual_labels.ndim == 0:
-        return {str(actual_labels.item())}
-
-    return {
-        str(label)
-        for label in actual_labels.tolist()
-    }
-
-
-# =========================
-# PREDICTION
-# =========================
-
 @torch.no_grad()
-def predict(model, signal, label_names, thresholds):
-    signal = torch.as_tensor(
-        signal,
-        dtype=torch.float32
-    )
+def predict_sample(model, signal, label_names, thresholds):
+    if not isinstance(signal, torch.Tensor):
+        signal = torch.as_tensor(signal, dtype=torch.float32)
 
-    if signal.shape != (
-        NUM_LEADS,
-        SIGNAL_LENGTH
-    ):
-        raise ValueError(
-            f"Expected signal shape "
-            f"{(NUM_LEADS, SIGNAL_LENGTH)}, "
-            f"got {tuple(signal.shape)}"
-        )
+    if signal.ndim == 2:
+        signal = signal.unsqueeze(0)
 
-    if not torch.isfinite(signal).all():
-        raise ValueError(
-            "ECG contains NaN or Inf values."
-        )
-
-    signal = signal.unsqueeze(0).to(DEVICE)
-
+    signal = signal.to(DEVICE)
     logits = model(signal)
+    probs = torch.sigmoid(logits).squeeze(0).cpu().numpy()
 
-    probabilities = torch.sigmoid(logits)
-    probabilities = (
-        probabilities.squeeze(0)
-        .cpu()
-        .numpy()
-    )
+    # Keep label, probability, and threshold aligned for every model output.
+    class_count = min(len(label_names), len(probs), len(thresholds))
+    label_names = label_names[:class_count]
+    thresholds = thresholds[:class_count]
 
-    predictions = probabilities >= thresholds
+    # Detection is threshold-based; ranking is independent of detection status.
+    preds = probs[:class_count] >= thresholds
 
-    predicted_labels = {
-        label_names[i]: float(probabilities[i])
-        for i in range(len(label_names))
-        if predictions[i]
-    }
+    active_predictions = [
+        (label_names[i], float(probs[i]), float(thresholds[i]))
+        for i in range(class_count)
+        if preds[i]
+    ]
 
-    ranked_labels = sorted(
+    ranked_predictions = sorted(
         [
-            (
-                label_names[i],
-                float(probabilities[i])
-            )
-            for i in range(len(label_names))
+            (label_names[i], float(probs[i]), float(thresholds[i]))
+            for i in range(class_count)
         ],
-        key=lambda item: item[1],
+        key=lambda x: x[1],
         reverse=True
     )
 
-    return predicted_labels, ranked_labels
+    return active_predictions, ranked_predictions
 
 
-# =========================
-# COMPARISON
-# =========================
+def display_sample(sample_num, dataset_idx, actual_labels, active_preds, ranked_preds, mapping):
+    top10_preds = ranked_preds[:10]
+    top10_labels = {item[0] for item in top10_preds}
+    pred_labels = {item[0] for item in active_preds}
+    correct = actual_labels & pred_labels
+    missed = actual_labels - pred_labels
+    extra = pred_labels - actual_labels
 
-def compare_predictions(
-    actual_labels,
-    predicted_labels
-):
-    predicted_set = set(predicted_labels.keys())
+    print("\n" + "=" * 75)
+    print(f" ECG SAMPLE {sample_num} | DATASET RECORD INDEX: {dataset_idx}")
+    print("=" * 75)
 
-    correct = actual_labels & predicted_set
-    missed = actual_labels - predicted_set
-    extra = predicted_set - actual_labels
-
-    return correct, missed, extra
-
-
-# =========================
-# DISPLAY
-# =========================
-
-def display_result(
-    sample_number,
-    dataset_index,
-    actual_labels,
-    predicted_labels,
-    ranked_labels
-):
-    correct, missed, extra = compare_predictions(
-        actual_labels,
-        predicted_labels
-    )
-
-    print("\n" + "=" * 65)
-    print(
-        f"ECG SAMPLE {sample_number} "
-        f"| DATASET INDEX: {dataset_index}"
-    )
-    print("=" * 65)
-
-    print("\nACTUAL DIAGNOSIS (DATASET):")
-
+    print("\n[GROUND TRUTH CLINICAL DIAGNOSES]")
     if actual_labels:
-        for label in sorted(actual_labels):
-            print(f"  - {label}")
+        for l in sorted(actual_labels):
+            name = get_label_display_name(l, mapping)
+            top10_marker = "YES" if l in top10_labels else "NO"
+            print(f"  * {l} -> {name} (Top 10: {top10_marker})")
     else:
-        print("  None")
+        print("  * None (Normal / Unlabeled)")
 
-    print("\nMODEL PREDICTION:")
+    print("\n[ACTIVE MODEL PREDICTIONS (Threshold Crossed)]")
+    if active_preds:
+        for l, prob, thresh in sorted(active_preds, key=lambda x: x[1], reverse=True):
+            name = get_label_display_name(l, mapping)
+            mark = "✓" if l in actual_labels else "+"
+            print(f"  {mark} {l} -> {name:<32} (Prob: {prob:.4f} | Thresh: {thresh:.2f})")
+    else:
+        print("  No labels crossed the selected thresholds.")
 
-    if predicted_labels:
-        for label, probability in sorted(
-            predicted_labels.items(),
-            key=lambda item: item[1],
-            reverse=True
-        ):
+    print("\n[TOP 10 DISEASE PREDICTIONS]")
+    if top10_preds:
+        rows = [
+            (rank, label, get_label_display_name(label, mapping), prob, thresh,
+             "✓ DETECTED" if prob >= thresh else "✗ NOT DETECTED")
+            for rank, (label, prob, thresh) in enumerate(top10_preds, start=1)
+        ]
+        label_width = max(len("Label"), *(len(row[1]) for row in rows))
+        name_width = max(len("Disease Name"), *(len(row[2]) for row in rows))
+        print(
+            f"  {'Rank':>4} | {'Label':<{label_width}} | "
+            f"{'Disease Name':<{name_width}} | {'Probability':>11} | "
+            f"{'Threshold':>9} | Status"
+        )
+        print("  " + "-" * (4 + label_width + name_width + 11 + 9 + 22))
+        for rank, label, name, prob, thresh, status in rows:
             print(
-                f"  - {label}: "
-                f"{probability:.4f}"
+                f"  {rank:>4} | {label:<{label_width}} | {name:<{name_width}} | "
+                f"{prob * 100:>10.2f}% | {thresh:>9.2f} | {status}"
             )
     else:
-        print("  No labels crossed thresholds.")
+        print("  No model outputs were available.")
 
-    print("\nCORRECT LABELS:")
+    detected_top10 = sum(prob >= thresh for _, _, _, prob, thresh, _ in rows) if top10_preds else 0
+    print("\n[TOP-10 SUMMARY]")
+    print(f"Top-10 diseases displayed: {len(top10_preds)}")
+    print(f"Detected among Top-10: {detected_top10}")
+    print(f"Not detected among Top-10: {len(top10_preds) - detected_top10}")
 
-    if correct:
-        for label in sorted(correct):
-            print(f"  ✓ {label}")
+    print("\n[COMPARISON SUMMARY]")
+    print(f"  Matched:  {len(correct)} {[get_label_display_name(x, mapping) for x in correct]}")
+    print(f"  Missed:   {len(missed)} {[get_label_display_name(x, mapping) for x in missed]}")
+    print(f"  Extra:    {len(extra)} {[get_label_display_name(x, mapping) for x in extra]}")
+
+    print("\n[ALL DETECTED DISEASES]")
+    if active_preds:
+        for l, prob, thresh in sorted(active_preds, key=lambda x: x[1], reverse=True):
+            name = get_label_display_name(l, mapping)
+            print(f"  ✓ {l} -> {name} (Prob: {prob:.4f} | Thresh: {thresh:.2f})")
     else:
-        print("  None")
+        print("  No labels crossed the selected thresholds.")
 
-    print("\nMISSED LABELS:")
+    print("-" * 75)
 
-    if missed:
-        for label in sorted(missed):
-            print(f"  ✗ {label}")
-    else:
-        print("  None")
+    return len(correct), len(missed), len(extra)
 
-    print("\nEXTRA PREDICTIONS:")
-
-    if extra:
-        for label in sorted(extra):
-            print(f"  + {label}")
-    else:
-        print("  None")
-
-    print("\nTOP 5 MODEL OUTPUTS:")
-
-    for rank, (label, probability) in enumerate(
-        ranked_labels[:5],
-        start=1
-    ):
-        print(
-            f"  {rank}. {label}: "
-            f"{probability:.4f}"
-        )
-
-    print("\n" + "-" * 65)
-
-
-# =========================
-# MAIN
-# =========================
 
 def main():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--count",
-        type=int,
-        default=None,
-        help="Number of random ECG samples (4-10)."
-    )
-
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Optional random seed."
-    )
-
-    parser.add_argument(
-        "--csv",
-        type=str,
-        default=str(DATASET_PATH)
-    )
+    parser = argparse.ArgumentParser(description="CardioFusionX Interactive Sample Inspector")
+    parser.add_argument("--count", type=int, default=5, help="Number of random ECG samples to inspect (1 to 20)")
+    parser.add_argument("--seed", type=int, default=None, help="Optional random seed")
+    parser.add_argument("--csv", type=str, default="test_split.csv", help="Dataset CSV path")
+    parser.add_argument("--model", type=str, default=None, help="Path to model checkpoint")
+    parser.add_argument("--thresholds", type=str, default=None, help="Custom path to thresholds JSON")
+    parser.add_argument("--threshold-mode", type=str, default="tuned", choices=["tuned", "conservative"],
+                        help="Threshold strategy: 'tuned' (F1-oriented) or 'conservative' (precision-oriented)")
 
     args = parser.parse_args()
 
     if args.seed is not None:
         random.seed(args.seed)
+        np.random.seed(args.seed)
 
-    if args.count is None:
-        sample_count = random.randint(4, 10)
-    else:
-        sample_count = args.count
+    model_path = Path(args.model) if args.model else resolve_default_model()
+    thresh_path = resolve_threshold_file(model_path, mode=args.threshold_mode, custom_thresh=args.thresholds)
+    mapping = load_diagnosis_mapping()
 
-    if not 4 <= sample_count <= 10:
-        raise ValueError(
-            "Count must be between 4 and 10."
-        )
+    print("=" * 75)
+    print(" CARDIOFUSIONX CLINICAL SAMPLE INSPECTOR")
+    print("=" * 75)
+    print(f"Model Checkpoint:    {model_path}")
+    print(f"Threshold Strategy:  {args.threshold_mode.upper()} ({thresh_path.name})")
+    print(f"Evaluation Dataset:  {args.csv}")
+    print(f"Samples to inspect:  {args.count}")
+    print("=" * 75)
 
-    print("Using device:", DEVICE)
-    dataset_path = Path(args.csv).resolve()
-    print("Dataset:", dataset_path)
-    print("Model:", MODEL_PATH)
-    print("Thresholds:", THRESHOLDS_PATH)
-    print("Random samples:", sample_count)
-
-    dataset = ECGDataset(args.csv)
-
+    dataset = ECGDataset(args.csv, augment=False)
     label_names = dataset.label_columns
+    thresholds = load_thresholds(label_names, thresh_path)
+    model = load_model(model_path, label_names)
 
-    if len(label_names) != NUM_CLASSES:
-        raise ValueError(
-            f"Expected {NUM_CLASSES} labels, "
-            f"found {len(label_names)}."
-        )
+    selected_indices = random.sample(range(len(dataset)), min(args.count, len(dataset)))
 
-    thresholds = np.full(
-        len(label_names),
-        0.65,
-        dtype=np.float32
-    )
-    model = load_model(label_names, MODEL_PATH)
+    total_c, total_m, total_e = 0, 0, 0
+    for idx, sample_idx in enumerate(selected_indices, start=1):
+        signal, raw_labels = dataset[sample_idx]
+        actual_labels = {
+            label_names[i]
+            for i in range(len(label_names))
+            if raw_labels[i] > 0.5
+        }
 
-    selected_indices = random.sample(
-        range(len(dataset)),
-        sample_count
-    )
+        active_preds, ranked_preds = predict_sample(model, signal, label_names, thresholds)
+        c, m, e = display_sample(idx, sample_idx, actual_labels, active_preds, ranked_preds, mapping)
+        total_c += c
+        total_m += m
+        total_e += e
 
-    total_correct = 0
-    total_missed = 0
-    total_extra = 0
-
-    for sample_number, index in enumerate(
-        selected_indices,
-        start=1
-    ):
-        sample = dataset[index]
-
-        signal, actual_labels_raw = extract_sample(
-            sample
-        )
-
-        actual_labels = get_actual_labels(
-            actual_labels_raw,
-            label_names
-        )
-
-        predicted_labels, ranked_labels = predict(
-            model=model,
-            signal=signal,
-            label_names=label_names,
-            thresholds=thresholds
-        )
-
-        correct, missed, extra = compare_predictions(
-            actual_labels,
-            predicted_labels
-        )
-
-        total_correct += len(correct)
-        total_missed += len(missed)
-        total_extra += len(extra)
-
-        display_result(
-            sample_number=sample_number,
-            dataset_index=index,
-            actual_labels=actual_labels,
-            predicted_labels=predicted_labels,
-            ranked_labels=ranked_labels
-        )
-
-    print("\n" + "=" * 65)
-    print("SUMMARY")
-    print("=" * 65)
-    print("Samples analysed:", sample_count)
-    print("Correct labels:", total_correct)
-    print("Missed labels:", total_missed)
-    print("Extra predictions:", total_extra)
-
-    print("\nNote:")
-    print(
-        "This is a dataset ground-truth comparison, "
-        "not a clinical diagnosis."
-    )
+    print("\n" + "=" * 75)
+    print(" INSPECTION SUMMARY")
+    print("=" * 75)
+    print(f"Total Samples Inspected:  {args.count}")
+    print(f"Total Correct Diagnoses:  {total_c}")
+    print(f"Total Missed Diagnoses:   {total_m}")
+    print(f"Total Extra Predictions:  {total_e}")
+    print("=" * 75)
 
 
 if __name__ == "__main__":
