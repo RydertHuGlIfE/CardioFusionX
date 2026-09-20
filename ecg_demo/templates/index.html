@@ -1,75 +1,60 @@
-
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CardioFusionX ECG Demo</title>
+  <title>CardioFusionX | ECG Lab</title>
   <script src="{{ url_for('static', filename='plotly.min.js') }}"></script>
-  <style>
-    body { margin:0; font-family:Arial,sans-serif; background:#0f172a; color:#e2e8f0; }
-    .container { max-width:1200px; margin:30px auto; padding:0 18px; }
-    .card { background:#1e293b; border:1px solid #334155; border-radius:16px; padding:22px; margin-bottom:20px; }
-    h1 { margin-top:0; } .muted { color:#94a3b8; }
-    input,button { padding:12px; border-radius:9px; border:1px solid #475569; }
-    button { background:#38bdf8; cursor:pointer; font-weight:bold; }
-    .error { background:#7f1d1d; padding:12px; border-radius:8px; }
-    .prediction { display:flex; justify-content:space-between; gap:12px; padding:12px; background:#334155; border-radius:8px; margin:8px 0; }
-    .pill { color:#0f172a; background:#86efac; padding:4px 8px; border-radius:999px; font-weight:bold; }
-    #plot { width:100%; height:620px; }
-  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
 </head>
 <body>
-<div class="container">
-  <div class="card">
-    <h1>CardioFusionX ECG Demo</h1>
-    <p class="muted">Upload a MATLAB .mat ECG sample containing <b>val</b> with shape (12, 5000).</p>
-    <form method="post" enctype="multipart/form-data">
-      <input type="file" name="ecg_file" accept=".mat" required>
-      <button type="submit">Analyze ECG</button>
-    </form>
-    {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  </div>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">CX</span><div><strong>CardioFusionX</strong><small>ECG research lab</small></div></div>
+      <nav><a class="active" href="#overview">Overview</a><a href="#waveform">Waveform</a><a href="#results">Predictions</a><a href="#robustness">Robustness</a><a href="#context">Context</a></nav>
+      <div class="side-note">Experimental AI research prototype<br>Not a medical diagnostic device.</div>
+    </aside>
+    <main class="main" id="overview">
+      <header class="topbar"><div><span class="eyebrow">12-lead analysis / 500 Hz</span><h1>Signal intelligence workspace</h1></div><span class="status-dot">LOCAL PROCESSING</span></header>
 
-  {% if result %}
-  <div class="card">
-    <h2>Prediction Results</h2>
-    <p class="muted">Threshold: {{ result.threshold }} | Checkpoint epoch: {{ result.epoch }} | Signal shape: {{ result.shape }}</p>
-    {% if result.predictions %}
-      {% for p in result.predictions %}
-      <div class="prediction">
-        <div><b>{{ p.name }}</b><br><span class="muted">{{ p.code }}</span></div>
-        <span class="pill">{{ "%.2f"|format(p.probability * 100) }}%</span>
-      </div>
-      {% endfor %}
-    {% else %}
-      <p>No diagnosis crossed the threshold.</p>
-    {% endif %}
-  </div>
+      {% if config_error %}<div class="alert danger">Configuration error: {{ config_error }}</div>{% endif %}
+      {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
 
-  <div class="card">
-    <h2>12-Lead ECG Plot</h2>
-    <div id="plot"></div>
-  </div>
+      <section class="hero-grid">
+        <div class="panel upload-panel">
+          <div class="panel-kicker">01 / Input</div><h2>Load a waveform</h2>
+          <p class="muted">MATLAB file with numeric <code>val</code> shaped exactly <code>(12, 5000)</code>.</p>
+          <form method="post" enctype="multipart/form-data" id="analysis-form">
+            <label class="dropzone" for="ecg_file"><span class="upload-icon">+</span><strong id="file-name">Choose ECG file</strong><small>Secure in-memory processing · up to 25 MB</small></label>
+            <input id="ecg_file" type="file" name="ecg_file" accept=".mat" required>
+            <div class="control-grid">
+              <label>Model<select name="model_key" id="model-key">{% for key, model in model_options.items() %}<option value="{{ key }}" {% if (result and result.model.key == key) or (not result and key == 'optimized_cnn') %}selected{% endif %}>{{ model.name }}{% if not model.available %} (missing){% endif %}</option>{% endfor %}</select></label>
+              <label>Threshold strategy<select name="threshold_strategy" id="threshold-strategy"><option value="fixed">Fixed 0.50</option><option value="tuned" {% if not result or result.threshold_strategy == 'tuned' %}selected{% endif %}>F1-oriented tuned</option><option value="conservative" {% if result and result.threshold_strategy == 'conservative' %}selected{% endif %}>Conservative</option><option value="f1">F1-oriented alias</option></select></label>
+            </div>
+            <button class="primary" type="submit">Analyze signal <span>→</span></button>
+          </form>
+        </div>
+        <div class="panel model-panel"><div class="panel-kicker">Active configuration</div><div class="model-title">{{ result.model.name if result else 'Select a checkpoint' }}</div><dl><dt>Architecture</dt><dd>{{ result.model.architecture if result else 'Validated at load time' }}</dd><dt>Checkpoint</dt><dd class="path">{{ result.model.path if result else 'No checkpoint loaded' }}</dd><dt>Classes</dt><dd>94 labels · canonical order</dd><dt>Input</dt><dd>12 leads · 5000 samples · 500 Hz</dd><dt>Thresholds</dt><dd>{{ result.threshold_source if result else 'Validation-derived per-class or fixed fallback' }}</dd></dl></div>
+      </section>
 
-  <script>
-    const signal = {{ signal|tojson }};
-    const traces = signal.map((lead, i) => ({
-      x: Array.from({length: lead.length}, (_, j) => j),
-      y: lead,
-      mode: "lines",
-      name: "Lead " + (i + 1)
-    }));
-    Plotly.newPlot("plot", traces, {
-      template: "plotly_dark",
-      title: "Raw ECG Signal",
-      xaxis: {title: "Sample"},
-      yaxis: {title: "Amplitude"},
-      legend: {orientation: "h"},
-      margin: {t:50, l:55, r:20, b:55}
-    }, {responsive:true});
-  </script>
-  {% endif %}
-</div>
+      <section class="stats-grid"><div class="stat"><span>Files this session</span><strong>{{ stats.uploaded }}</strong></div><div class="stat"><span>Processed signals</span><strong>{{ stats.processed }}</strong></div><div class="stat"><span>Detected labels</span><strong>{{ result.detected_count if result else 0 }}</strong></div><div class="stat"><span>Uncertainty indicator</span><strong class="{{ result.uncertainty if result else 'neutral' }}">{{ result.uncertainty|upper if result else '—' }}</strong></div></section>
+
+      {% if result %}
+      <section class="content-grid" id="results">
+        <div class="panel quality-panel"><div class="panel-kicker">02 / Quality gate</div><div class="quality-head"><div><h2>{{ quality.status }}</h2><p class="muted">Technical signal quality heuristic</p></div><div class="score">{{ (quality.score * 100)|round|int }}<small>/100</small></div></div><div class="meter"><span style="width:{{ quality.score * 100 }}%"></span></div>{% if quality.warning %}<div class="warning">{{ quality.warning }}</div>{% endif %}<div class="metric-list"><span>Amplitude range <b>{{ quality.amplitude_min }} to {{ quality.amplitude_max }}</b></span><span>Baseline wander <b>{{ quality.baseline_wander }}</b></span><span>HF noise ratio <b>{{ quality.high_frequency_noise_ratio }}</b></span><span>Flatline leads <b>{{ quality.flatline_leads }}</b></span></div><small class="muted">{{ quality.disclaimer }}</small></div>
+        <div class="panel uncertainty-panel"><div class="panel-kicker">03 / Uncertainty</div><h2>Review signal context</h2><div class="uncertainty-value {{ result.uncertainty }}">{{ result.uncertainty|capitalize }} uncertainty indicator</div><p class="muted">Maximum sigmoid output: <strong>{{ (result.max_probability * 100)|round(2) }}%</strong><br>Labels near their thresholds: <strong>{{ result.possible|length }}</strong><br>Prediction entropy: <strong>{{ result.entropy }}</strong></p><p class="fine-print">{{ result.probability_disclaimer }} These indicators are not clinically calibrated.</p></div>
+      </section>
+
+      <section class="panel waveform-panel" id="waveform"><div class="section-heading"><div><div class="panel-kicker">04 / Visualization</div><h2>Recorded waveform</h2></div><div class="plot-actions"><label>Focus lead<select id="focus-lead">{% for lead in lead_names %}<option value="{{ loop.index0 }}">{{ lead }}</option>{% endfor %}</select></label><button class="ghost" id="reset-view" type="button">Reset view</button></div></div><div class="lead-toggles">{% for lead in lead_names %}<label><input type="checkbox" class="lead-toggle" data-lead="{{ loop.index0 }}" checked>{{ lead }}</label>{% endfor %}</div><div id="ecg-plot"></div><div id="focus-plot"></div><p class="fine-print">Rendered from the uploaded signal. Markers and highlighted regions are not shown because no validated R-peak or clinical abnormality algorithm is enabled.</p></section>
+
+      <section class="panel predictions"><div class="section-heading"><div><div class="panel-kicker">05 / Model output</div><h2>Detected labels <span class="count">{{ result.detected_count }}</span></h2></div><div class="button-row"><button class="ghost export-json" type="button">Export JSON</button><button class="ghost export-csv" type="button">Export CSV</button></div></div>{% if result.detected %}<div class="prediction-table"><div class="table-head"><span>Label</span><span>Condition</span><span>Probability</span><span>Threshold</span><span>Status</span></div>{% for p in result.detected %}<div class="prediction-row"><code>{{ p.code }}</code><strong>{{ p.name }}</strong><span>{{ (p.probability * 100)|round(2) }}%</span><span>{{ p.threshold|round(3) }}</span><b class="detected">DETECTED</b></div>{% endfor %}</div>{% else %}<div class="empty">No labels crossed the selected threshold.</div>{% endif %}<div class="subsection"><h3>Possible labels near threshold</h3>{% if result.possible %}{% for p in result.possible %}<span class="tag">{{ p.name }} · {{ (p.probability * 100)|round(1) }}%</span>{% endfor %}{% else %}<span class="muted">None in the configured margin.</span>{% endif %}</div><p class="disclaimer">This tool is an experimental AI research prototype and is not a medical diagnostic device. Predictions must be reviewed by qualified healthcare professionals.</p></section>
+
+      <section class="two-col" id="robustness"><div class="panel"><div class="panel-kicker">06 / Robustness experiment</div><h2>Noise stress test</h2><p class="muted">Controlled corruption comparison. This is a robustness experiment and does not represent clinical performance.</p><div class="control-grid"><label>Noise<select id="noise-type"><option value="gaussian">Gaussian</option><option value="baseline">Baseline wander</option><option value="motion">Electrode motion-like</option><option value="scaling">Amplitude scaling</option><option value="lead_noise">Lead-specific noise</option></select></label><label>Intensity <input id="noise-intensity" type="range" min="0" max="1" step="0.05" value="0.3"><output id="noise-value">0.30</output></label></div><button class="ghost" id="stress-test" type="button">Run comparison</button><div id="stress-output" class="result-note"></div><hr><h3>Counterfactual mask</h3><p class="muted">Replace a selected segment with its local mean and compare outputs. This does not establish causality.</p><div class="control-grid"><label>Start sample<input id="counter-start" type="number" min="0" max="4999" value="0"></label><label>End sample<input id="counter-end" type="number" min="1" max="5000" value="500"></label></div><button class="ghost" id="counterfactual" type="button">Compare modified segment</button><div id="counter-output" class="result-note"></div></div><div class="panel" id="context"><div class="panel-kicker">07 / Context</div><h2>Patient history demo</h2><p class="muted">This information is not sent to the ECG model and is not stored.</p><div class="control-grid"><label>Age<input id="history-age" type="number" min="0" max="130"></label><label>Sex<select id="history-sex"><option>Not provided</option><option>Female</option><option>Male</option><option>Intersex</option></select></label></div><label>Symptoms<textarea id="history-symptoms" rows="2" placeholder="Optional demonstration context"></textarea></label><p class="fine-print">Context is displayed only for demonstration and does not change ECG-only predictions.</p></div></section>
+      <section class="panel"><div class="panel-kicker">08 / Explainability</div><h2>Model sensitivity</h2><p class="muted">Validated per-label integrated gradients or occlusion maps are not enabled for this architecture in this demo. No clinical explanation is generated.</p><p class="fine-print">A future explanation view must show model sensitivity only and should not be interpreted as a clinically validated explanation.</p></section>
+      {% else %}<section class="empty-state"><span>12</span><h2>Upload a real ECG to begin</h2><p>The dashboard will show the actual waveform, validation metrics, model outputs, and threshold context after a successful analysis.</p></section>{% endif %}
+      <footer>CardioFusionX · local research workspace · no patient history persistence</footer>
+    </main>
+  </div>
+  {% if result %}<script>window.CFX_RESULT={{ result|tojson }};window.CFX_QUALITY={{ quality|tojson }};window.CFX_SIGNAL={{ signal|tojson }};window.CFX_LEADS={{ lead_names|tojson }};window.CFX_SAMPLE_RATE={{ sample_rate }};</script><script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>{% endif %}
 </body>
 </html>

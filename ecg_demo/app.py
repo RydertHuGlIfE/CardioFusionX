@@ -1,148 +1,128 @@
-
-import json
+import numpy as np
 from pathlib import Path
 
-import numpy as np
-import torch
-from scipy.io import loadmat
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template
+from flask import request
 
-from model import ECGCNN
+from config import LEAD_NAMES, SAMPLE_RATE, available_models, canonical_labels, diagnosis_mapping
+from export_utils import prediction_csv, prediction_json
+from inference import InputValidationError, normalize_signal, predict_signal, prepare_prediction, read_mat_upload
+from model_loader import ModelConfigurationError, load_model, load_thresholds
+from robustness import apply_noise, changed_labels
+from signal_quality import analyze_signal
+
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 
-BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR / "model.pth"
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-NUM_CLASSES = 94
-NUM_LEADS = 12
-SIGNAL_LENGTH = 5000
-THRESHOLD = 0.65
+try:
+    LABELS = canonical_labels()
+    MAPPING = diagnosis_mapping()
+    CONFIG_ERROR = None
+except Exception as exc:
+    LABELS, MAPPING, CONFIG_ERROR = [], {}, str(exc)
 
-# Replace/add mappings as needed. Unlisted labels remain readable as their code.
-DIAGNOSIS_NAMES = {
-    "426177001": "Sinus Bradycardia",
-    "426783006": "Sinus Rhythm",
-    "164890007": "Atrial Flutter",
-    "427084000": "Sinus Tachycardia",
-    "164934002": "T Wave Abnormal",
-    "59931005": "T Wave Inversion",
-    "427393009": "Sinus Arrhythmia",
-    "164889003": "Atrial Fibrillation",
-    "39732003": "Left Axis Deviation",
-    "284470004": "Premature Atrial Contraction",
-    "426761007": "Supraventricular Tachycardia",
-    "59118001": "Right Bundle Branch Block",
-    "111975006": "Prolonged QT Interval",
-    "164947007": "Prolonged PR Interval",
-    "427172004": "Premature Ventricular Contractions",
-    "164917005": "Q Wave Abnormal",
-    "47665007": "Right Axis Deviation",
-    "17338001": "Ventricular Premature Beats",
-    "164909002": "Left Bundle Branch Block",
-    "63593006": "Supraventricular Premature Beats",
-    "425856008": "Paroxysmal Ventricular Tachycardia",
-}
+STATS = {"uploaded": 0, "processed": 0, "predictions": 0}
 
-def label_name(label):
-    code = label.replace("label_", "")
-    return DIAGNOSIS_NAMES.get(code, f"Code {code} (mapping unavailable)")
 
-def load_model():
-    model = ECGCNN(num_classes=NUM_CLASSES).to(DEVICE)
-    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False)
-    state_dict = checkpoint.get("model_state_dict", checkpoint)
-    model.load_state_dict(state_dict)
-    model.eval()
-    return model, checkpoint.get("epoch", "unknown")
+def render_dashboard(error=None, result=None, signal=None, quality=None):
+    return render_template(
+        "index.html",
+        error=error,
+        result=result,
+        signal=signal,
+        quality=quality,
+        model_options=available_models(),
+        stats=STATS,
+        lead_names=LEAD_NAMES,
+        sample_rate=SAMPLE_RATE,
+        config_error=CONFIG_ERROR,
+    )
 
-def prepare_signal(file_storage):
-    temp_path = BASE_DIR / "_uploaded_sample.mat"
-    file_storage.save(temp_path)
-    try:
-        mat = loadmat(temp_path)
-        if "val" not in mat:
-            raise ValueError("The MAT file must contain a variable named 'val'.")
-        signal = mat["val"].astype(np.float32)
-    finally:
-        temp_path.unlink(missing_ok=True)
-
-    if signal.shape != (NUM_LEADS, SIGNAL_LENGTH):
-        raise ValueError(
-            f"Expected signal shape {(NUM_LEADS, SIGNAL_LENGTH)}, got {tuple(signal.shape)}."
-        )
-
-    mean = signal.mean(axis=1, keepdims=True)
-    std = signal.std(axis=1, keepdims=True) + 1e-8
-    normalized = (signal - mean) / std
-    return signal, normalized
-
-def predict(model, normalized_signal):
-    tensor = torch.tensor(normalized_signal, dtype=torch.float32).unsqueeze(0).to(DEVICE)
-    with torch.no_grad():
-        probabilities = torch.sigmoid(model(tensor)).squeeze(0).cpu().numpy()
-
-    labels = [f"label_{x}" for x in [
-        "426177001", "426783006", "164890007", "427084000", "164934002",
-        "55827005", "55930002", "59931005", "427393009", "164889003",
-        "429622005", "39732003", "284470004", "10370003", "428750005",
-        "270492004", "713427006", "427172004", "164917005", "251146004",
-        "47665007", "164930006", "698252002", "426761007", "61721007",
-        "59118001", "164873001", "365413008", "111975006", "6374002",
-        "445118002", "428417006", "713422000", "17338001", "713426002",
-        "233917008", "164909002", "251223006", "106068003", "733534002",
-        "164931005", "251199005", "164912004", "29320008", "164937009",
-        "164865005", "13640000", "89792004", "425856008", "251205003",
-        "81898007", "251198002", "27885002", "426995002", "74390002",
-        "195042002", "251170000", "50799005", "164896001", "54329005",
-        "75532003", "164947007", "57054005", "446358003", "67751000119106",
-        "5609005", "54016002", "233897008", "426648003", "49578007",
-        "251187003", "251166008", "233892002", "61277005", "195060002",
-        "426664006", "251164006", "63593006", "251180001", "446813000",
-        "17366009", "426627000", "111288001", "426183003", "251120003",
-        "65778007", "445211001", "418818005", "251173003", "164942001",
-        "11157007", "195101003", "77867006", "67741000119109"
-    ]]
-
-    results = []
-    for label, probability in zip(labels, probabilities):
-        if probability >= THRESHOLD:
-            results.append({
-                "code": label,
-                "name": label_name(label),
-                "probability": round(float(probability), 4),
-            })
-    results.sort(key=lambda x: x["probability"], reverse=True)
-    return results
-
-MODEL, MODEL_EPOCH = load_model()
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    error = None
-    result = None
-    signal = None
-    if request.method == "POST":
-        uploaded = request.files.get("ecg_file")
-        if not uploaded or not uploaded.filename:
-            error = "Please upload a .mat ECG file."
-        elif not uploaded.filename.lower().endswith(".mat"):
-            error = "Only .mat files are supported in this demo."
-        else:
-            try:
-                raw_signal, normalized_signal = prepare_signal(uploaded)
-                predictions = predict(MODEL, normalized_signal)
-                signal = raw_signal.tolist()
-                result = {
-                    "predictions": predictions,
-                    "threshold": THRESHOLD,
-                    "epoch": MODEL_EPOCH,
-                    "shape": list(raw_signal.shape),
-                }
-            except Exception as exc:
-                error = str(exc)
+    if request.method == "GET":
+        return render_dashboard()
+    uploaded = request.files.get("ecg_file")
+    model_key = request.form.get("model_key", "optimized_cnn")
+    strategy = request.form.get("threshold_strategy", "tuned")
+    STATS["uploaded"] += 1
+    if not uploaded or not uploaded.filename:
+        return render_dashboard("Please upload a .mat ECG file.")
+    if not LABELS:
+        return render_dashboard(f"Configuration error: {CONFIG_ERROR}")
+    try:
+        raw_signal, result, _ = prepare_prediction(uploaded, model_key, strategy, MAPPING, LABELS)
+        quality = analyze_signal(raw_signal, SAMPLE_RATE)
+        result["lead_names"] = LEAD_NAMES
+        STATS["processed"] += 1
+        STATS["predictions"] += result["detected_count"]
+        return render_dashboard(result=result, signal=raw_signal.tolist(), quality=quality)
+    except (InputValidationError, ModelConfigurationError, RuntimeError, ValueError) as exc:
+        return render_dashboard(str(exc))
+    except Exception:
+        app.logger.exception("Unexpected ECG processing failure")
+        return render_dashboard("The ECG could not be processed. Check the file and server logs.")
 
-    return render_template("index.html", result=result, signal=signal, error=error)
+
+@app.post("/api/stress-test")
+def stress_test():
+    try:
+        uploaded = request.files.get("ecg_file")
+        noise_type = request.form.get("noise_type", "gaussian")
+        intensity = float(request.form.get("intensity", "0.3"))
+        raw_signal, filename = read_mat_upload(uploaded)
+        model_key = request.form.get("model_key", "optimized_cnn")
+        strategy = request.form.get("threshold_strategy", "tuned")
+        model, info = load_model(model_key, LABELS)
+        thresholds, _ = load_thresholds(LABELS, info["path"], strategy)
+        original = predict_signal(model, normalize_signal(raw_signal), LABELS, thresholds, MAPPING, info, strategy)
+        noisy_signal = apply_noise(raw_signal, noise_type, intensity)
+        noisy = predict_signal(model, normalize_signal(noisy_signal), LABELS, thresholds, MAPPING, info, strategy)
+        return jsonify({"filename": filename, "noise_type": noise_type, "intensity": intensity, "original": original, "noisy": noisy, "changed_labels": changed_labels(original, noisy), "quality_before": analyze_signal(raw_signal, SAMPLE_RATE), "quality_after": analyze_signal(noisy_signal, SAMPLE_RATE), "signal": noisy_signal.tolist()})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/counterfactual")
+def counterfactual():
+    try:
+        uploaded = request.files.get("ecg_file")
+        raw_signal, _ = read_mat_upload(uploaded)
+        start = max(0, int(request.form.get("start", 0)))
+        end = min(raw_signal.shape[1], int(request.form.get("end", raw_signal.shape[1])))
+        if start >= end:
+            raise ValueError("Counterfactual segment must have a positive duration.")
+        modified = raw_signal.copy()
+        replacement = np.mean(modified[:, max(0, start - 1):min(modified.shape[1], end + 1)], axis=1, keepdims=True)
+        modified[:, start:end] = replacement
+        model_key = request.form.get("model_key", "optimized_cnn")
+        strategy = request.form.get("threshold_strategy", "tuned")
+        model, info = load_model(model_key, LABELS)
+        thresholds, _ = load_thresholds(LABELS, info["path"], strategy)
+        original = predict_signal(model, normalize_signal(raw_signal), LABELS, thresholds, MAPPING, info, strategy)
+        changed = predict_signal(model, normalize_signal(modified), LABELS, thresholds, MAPPING, info, strategy)
+        return jsonify({"start_sample": start, "end_sample": end, "original": original, "modified": changed, "changed_labels": changed_labels(original, changed)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/export/json")
+def export_json():
+    payload = request.get_json(silent=True) or {}
+    response = app.response_class(prediction_json(payload.get("result", {}), payload.get("quality", {}), payload.get("model", {})), mimetype="application/json")
+    response.headers["Content-Disposition"] = "attachment; filename=cardiofusionx-result.json"
+    return response
+
+
+@app.post("/api/export/csv")
+def export_csv():
+    payload = request.get_json(silent=True) or {}
+    response = app.response_class(prediction_csv(payload.get("result", {})), mimetype="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=cardiofusionx-predictions.csv"
+    return response
+
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=False)

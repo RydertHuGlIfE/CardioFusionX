@@ -2,3 +2,4 @@ flask
 torch
 numpy
 scipy
+pytest
