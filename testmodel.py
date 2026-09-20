@@ -27,12 +27,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 
 MODEL_PATH = (
     PROJECT_ROOT
-    / "experiments/residual_focal_best/model.pth"
+    / "experiments/optimized_v1/best_macro_f1/model.pth"
 )
 
 THRESHOLDS_PATH = (
     PROJECT_ROOT
-    / "experiments/residual_focal_best/thresholds.json"
+    / "experiments/optimized_v1/best_macro_f1/conservative_thresholds.json"
 )
 
 DATASET_PATH = PROJECT_ROOT / "test_split.csv"
@@ -42,8 +42,13 @@ DATASET_PATH = PROJECT_ROOT / "test_split.csv"
 # LOAD THRESHOLDS
 # =========================
 
-def load_thresholds(label_names):
-    with open(THRESHOLDS_PATH, "r") as file:
+def load_thresholds(label_names, thresholds_path):
+    if not thresholds_path.exists():
+        raise FileNotFoundError(
+            f"Threshold file does not exist: {thresholds_path}"
+        )
+
+    with thresholds_path.open("r") as file:
         threshold_data = json.load(file)
 
     missing = [
@@ -69,13 +74,18 @@ def load_thresholds(label_names):
 # LOAD MODEL
 # =========================
 
-def load_model():
+def load_model(label_names, model_path):
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"Model checkpoint does not exist: {model_path}"
+        )
+
     model = ECGCNN(
         num_classes=NUM_CLASSES
     ).to(DEVICE)
 
     checkpoint = torch.load(
-        MODEL_PATH,
+        model_path,
         map_location=DEVICE,
         weights_only=False
     )
@@ -87,14 +97,28 @@ def load_model():
 
     config = checkpoint.get("config", {})
 
-    if config.get("experiment") != "residual_focal":
+    if config.get("experiment") != "optimized_v1":
         raise ValueError(
-            "This is not a residual_focal checkpoint."
+            "This is not an optimized_v1 checkpoint."
         )
 
-    model.load_state_dict(
-        checkpoint["model_state_dict"]
-    )
+    if config.get("num_classes") != NUM_CLASSES:
+        raise ValueError(
+            f"Checkpoint class count does not match {NUM_CLASSES}."
+        )
+
+    checkpoint_labels = checkpoint.get("label_names")
+    if checkpoint_labels != label_names:
+        raise ValueError(
+            "Checkpoint label order does not match the dataset label order."
+        )
+
+    try:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    except RuntimeError as error:
+        raise ValueError(
+            "Checkpoint architecture is incompatible with model.py."
+        ) from error
 
     model.eval()
 
@@ -370,8 +394,10 @@ def main():
         )
 
     print("Using device:", DEVICE)
-    print("Dataset:", args.csv)
+    dataset_path = Path(args.csv).resolve()
+    print("Dataset:", dataset_path)
     print("Model:", MODEL_PATH)
+    print("Thresholds:", THRESHOLDS_PATH)
     print("Random samples:", sample_count)
 
     dataset = ECGDataset(args.csv)
@@ -389,7 +415,7 @@ def main():
         0.65,
         dtype=np.float32
     )
-    model = load_model()
+    model = load_model(label_names, MODEL_PATH)
 
     selected_indices = random.sample(
         range(len(dataset)),

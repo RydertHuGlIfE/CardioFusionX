@@ -26,8 +26,8 @@ from model import ECGCNN
 
 SEED = 42
 BATCH_SIZE = 16
-EPOCHS = 10
-LEARNING_RATE = 0.0001
+EPOCHS = 30
+LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 1e-4
 FOCAL_GAMMA = 2.0
 SCHEDULER_PATIENCE = 3
@@ -41,34 +41,21 @@ AMP_ENABLED = False
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).resolve().parent
-EXPERIMENT_ROOT = PROJECT_ROOT / "experiments" / "targeted_finetune_v1"
+EXPERIMENT_ROOT = PROJECT_ROOT / "experiments" / "optimized_v1"
 
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=2.0, pos_weight=None, class_multiplier=None):
+    def __init__(self, gamma=2.0, pos_weight=None):
         super().__init__()
         self.gamma = gamma
-        self.bce = nn.BCEWithLogitsLoss(
-            pos_weight=pos_weight,
-            reduction="none"
-        )
-
-        if class_multiplier is None:
-            class_multiplier = torch.ones_like(pos_weight)
-
-        self.register_buffer("class_multiplier", class_multiplier)
+        self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
 
     def forward(self, inputs, targets):
         weighted_bce = self.bce(inputs, targets)
         probabilities = torch.sigmoid(inputs)
-        true_class_probability = (
-            probabilities * targets
-            + (1 - probabilities) * (1 - targets)
-        )
+        true_class_probability = probabilities * targets + (1 - probabilities) * (1 - targets)
         focal_factor = (1 - true_class_probability) ** self.gamma
-        loss = focal_factor * weighted_bce
-        loss = loss * self.class_multiplier
-        return loss.mean()
+        return (focal_factor * weighted_bce).mean()
 
 
 def set_seed(seed):
@@ -267,64 +254,13 @@ def main():
     positive_counts = torch.tensor(train_dataset.df[label_names].sum(axis=0).to_numpy(), dtype=torch.float32)
     negative_counts = len(train_dataset) - positive_counts
     pos_weight = torch.where(positive_counts > 0, negative_counts / positive_counts, torch.ones_like(positive_counts)).clamp(max=20)
-    class_multiplier = torch.ones(NUM_CLASSES, dtype=torch.float32)
-    targeted_classes = {
-        "label_251199005",
-        "label_164931005",
-        "label_733534002",
-        "label_106068003",
-        "label_251223006",
-        "label_164909002",
-        "label_713426002",
-        "label_233917008",
-        "label_713422000",
-        "label_17338001",
-        "label_428417006",
-        "label_6374002",
-        "label_111975006",
-        "label_445118002",
-        "label_164873001",
-        "label_59118001",
-        "label_365413008",
-        "label_61721007",
-        "label_426761007",
-    }
-    for index, label in enumerate(label_names):
-        if label in targeted_classes:
-            class_multiplier[index] = 1.25
-    print("Targeted classes:", int((class_multiplier > 1).sum()))
     model = ECGCNN(num_classes=NUM_CLASSES).to(DEVICE)
     test_output = model(torch.randn(2, 12, SIGNAL_LENGTH, device=DEVICE))
     if tuple(test_output.shape) != (2, NUM_CLASSES) or not torch.isfinite(test_output).all():
         raise ValueError("Model architecture check failed.")
     architecture = str(model)
     (EXPERIMENT_ROOT / "model_architecture.txt").write_text(architecture)
-    criterion = FocalLoss(
-        FOCAL_GAMMA,
-        pos_weight.to(DEVICE),
-        class_multiplier.to(DEVICE)
-    )
-
-    checkpoint_path = (
-        PROJECT_ROOT
-        / "experiments"
-        / "optimized_v1"
-        / "best_macro_f1"
-        / "model.pth"
-    )
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(
-            f"Existing checkpoint not found: {checkpoint_path}"
-        )
-
-    checkpoint = torch.load(
-        checkpoint_path,
-        map_location=DEVICE,
-        weights_only=False
-    )
-    model.load_state_dict(checkpoint["model_state_dict"])
-    print(f"Loaded checkpoint from: {checkpoint_path}")
-
+    criterion = FocalLoss(FOCAL_GAMMA, pos_weight.to(DEVICE))
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=SCHEDULER_PATIENCE)
     scaler = GradScaler(
@@ -333,7 +269,7 @@ def main():
     )
     best_values = {"macro_f1": -np.inf, "micro_f1": -np.inf, "macro_recall": -np.inf, "val_loss": np.inf}
     patience_count = 0
-    config = {"seed": SEED, "batch_size": BATCH_SIZE, "epochs": EPOCHS, "learning_rate": LEARNING_RATE, "weight_decay": WEIGHT_DECAY, "optimizer": "AdamW", "focal_gamma": FOCAL_GAMMA, "pos_weight_max": 20, "scheduler": "ReduceLROnPlateau(mode='max', factor=0.5)", "checkpoint_selection": "validation tuned macro_f1", "threshold_data": "validation only", "augmentation": "disabled to preserve ECG morphology", "experiment": "targeted_finetune_v1", "num_classes": NUM_CLASSES, "label_names": label_names, "focal_loss_formulation": "weighted_bce=BCEWithLogitsLoss(pos_weight,reduction='none'); pt=sigmoid(logit)*y+(1-sigmoid(logit))*(1-y); loss=mean((1-pt)^gamma*weighted_bce)"}
+    config = {"seed": SEED, "batch_size": BATCH_SIZE, "epochs": EPOCHS, "learning_rate": LEARNING_RATE, "weight_decay": WEIGHT_DECAY, "optimizer": "AdamW", "focal_gamma": FOCAL_GAMMA, "pos_weight_max": 20, "scheduler": "ReduceLROnPlateau(mode='max', factor=0.5)", "checkpoint_selection": "validation tuned macro_f1", "threshold_data": "validation only", "augmentation": "disabled to preserve ECG morphology", "experiment": "optimized_v1", "num_classes": NUM_CLASSES, "label_names": label_names, "focal_loss_formulation": "weighted_bce=BCEWithLogitsLoss(pos_weight,reduction='none'); pt=sigmoid(logit)*y+(1-sigmoid(logit))*(1-y); loss=mean((1-pt)^gamma*weighted_bce)"}
     (EXPERIMENT_ROOT / "config.json").write_text(json.dumps(config, indent=2))
     history_path = EXPERIMENT_ROOT / "training_history.csv"
     with history_path.open("w", newline="") as file:
