@@ -1,8 +1,8 @@
 {
   "seed": 42,
   "batch_size": 16,
-  "epochs": 50,
-  "learning_rate": 0.00257,
+  "epochs": 18,
+  "learning_rate": 0.00136,
   "focal_gamma": 2.0,
   "scheduler_patience": 3,
   "early_stopping_patience": 8,

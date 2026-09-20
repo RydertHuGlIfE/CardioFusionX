@@ -1,0 +1,2 @@
+epoch,train_loss,val_loss,lr,mean_gradient_norm,max_gradient_norm,clipped_batches
+1,0.08463470492256689,0.07498749895671719,0.00257,0.08309059581051954,0.8600391745567322,0

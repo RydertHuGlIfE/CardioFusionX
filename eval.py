@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import pandas as pd
 import json
+import argparse
 
 from pathlib import Path
 from torch.utils.data import DataLoader
@@ -222,6 +223,7 @@ def evaluate_model(
     output_dir,
     thresholds_path=None,
     require_residual_focal=False,
+    global_threshold=None,
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -229,7 +231,12 @@ def evaluate_model(
     image_dir = output_dir / "confusion_matrix_images"
     image_dir.mkdir(parents=True, exist_ok=True)
 
-    if thresholds_path is None:
+    if global_threshold is not None:
+        if not 0.0 <= global_threshold <= 1.0:
+            raise ValueError("global_threshold must be between 0 and 1")
+        thresholds = [float(global_threshold)] * len(label_names)
+        threshold_mode = f"fixed ({global_threshold:.2f})"
+    elif thresholds_path is None:
         thresholds = [0.5] * len(label_names)
         threshold_mode = "fixed (0.5)"
     else:
@@ -422,6 +429,7 @@ def evaluate_if_available(
     output_dir,
     thresholds_path=None,
     require_residual_focal=False,
+    global_threshold=None,
 ):
     model_path = Path(model_path)
     if not model_path.exists():
@@ -439,6 +447,7 @@ def evaluate_if_available(
             output_dir,
             thresholds_path=thresholds_path,
             require_residual_focal=require_residual_focal,
+            global_threshold=global_threshold,
         )
     except RuntimeError as error:
         print(
@@ -447,45 +456,62 @@ def evaluate_if_available(
         )
 
 
-evaluate_if_available(
-    "experiments/latest/model.pth",
-    "experiments/evaluation/latest_fixed",
-    thresholds_path=None
-)
 
-evaluate_if_available(
-    "experiments/best/model.pth",
-    "experiments/evaluation/best_tuned",
-    thresholds_path="experiments/best/thresholds.json"
-)
+def threshold_sweep(checkpoint, thresholds):
+    # Collect probabilities once, then evaluate each threshold quickly.
+    model, epoch = load_model(checkpoint, require_residual_focal=True)
+    ys, ps = [], []
+    with torch.no_grad():
+        for signals, labels in test_loader:
+            probabilities = torch.sigmoid(model(signals.to(DEVICE)))
+            ys.append(labels.numpy())
+            ps.append(probabilities.cpu().numpy())
+    y_true = np.concatenate(ys)
+    y_prob = np.concatenate(ps)
 
-evaluate_if_available(
-    "experiments/best/model.pth",
-    "experiments/evaluation/best_fixed",
-    thresholds_path=None
-)
+    print(f"\\nThreshold sweep: {checkpoint} (epoch {epoch})")
+    print("threshold | micro_precision | micro_recall | micro_f1 | macro_f1 | labels_predicted")
+    results = []
+    for t in thresholds:
+        y_pred = (y_prob >= t).astype(int)
+        row = {
+            "threshold": float(t),
+            "micro_precision": float(precision_score(y_true, y_pred, average="micro", zero_division=0)),
+            "micro_recall": float(recall_score(y_true, y_pred, average="micro", zero_division=0)),
+            "micro_f1": float(f1_score(y_true, y_pred, average="micro", zero_division=0)),
+            "macro_f1": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+            "labels_predicted": int((y_pred.sum(axis=0) > 0).sum()),
+        }
+        results.append(row)
+        print(f"{t:9.2f} | {row['micro_precision']:15.4f} | {row['micro_recall']:12.4f} | {row['micro_f1']:9.4f} | {row['macro_f1']:8.4f} | {row['labels_predicted']:16d}")
+    best=max(results, key=lambda x:x["micro_f1"])
+    print(f"Best threshold by micro-F1: {best['threshold']:.2f} (F1={best['micro_f1']:.4f})")
+    out=EXPERIMENT_ROOT/"evaluation"/"threshold_sweep.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(results, indent=2))
+    print("Saved:", out)
 
-evaluate_if_available(
-    EXPERIMENT_ROOT / "residual_focal_latest/model.pth",
-    EXPERIMENT_ROOT / "evaluation/residual_focal_latest_fixed",
-    thresholds_path=None,
-    require_residual_focal=True,
-)
 
-evaluate_if_available(
-    EXPERIMENT_ROOT / "residual_focal_best/model.pth",
-    EXPERIMENT_ROOT / "evaluation/residual_focal_best_fixed",
-    thresholds_path=None,
-    require_residual_focal=True,
-)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", default=str(EXPERIMENT_ROOT/"residual_focal_latest/model.pth"))
+    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--threshold-mode", choices=["fixed", "tuned", "sweep"], default="fixed")
+    parser.add_argument("--thresholds", default="0.50,0.55,0.60,0.65,0.70,0.75,0.80")
+    parser.add_argument("--output-dir", default=None)
+    args=parser.parse_args()
+    checkpoint=Path(args.checkpoint)
+    if not checkpoint.exists():
+        raise FileNotFoundError(checkpoint)
+    if args.threshold_mode == "sweep":
+        threshold_sweep(checkpoint, [float(x) for x in args.thresholds.split(",")])
+    elif args.threshold_mode == "tuned":
+        out=Path(args.output_dir) if args.output_dir else EXPERIMENT_ROOT/"evaluation"/"custom_tuned"
+        evaluate_if_available(checkpoint, out, thresholds_path=checkpoint.parent/"thresholds.json", require_residual_focal=True)
+    else:
+        out=Path(args.output_dir) if args.output_dir else EXPERIMENT_ROOT/"evaluation"/f"custom_fixed_{args.threshold:.2f}"
+        evaluate_if_available(checkpoint, out, require_residual_focal=True, global_threshold=args.threshold)
 
-evaluate_if_available(
-    EXPERIMENT_ROOT / "residual_focal_best/model.pth",
-    EXPERIMENT_ROOT / "evaluation/residual_focal_best_tuned",
-    thresholds_path=(
-        EXPERIMENT_ROOT / "residual_focal_best/thresholds.json"
-    ),
-    require_residual_focal=True,
-)
 
-print("\nEvaluation complete.")
+if __name__ == "__main__":
+    main()

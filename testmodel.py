@@ -384,7 +384,11 @@ def main():
             f"found {len(label_names)}."
         )
 
-    thresholds = load_thresholds(label_names)
+    thresholds = np.full(
+        len(label_names),
+        0.65,
+        dtype=np.float32
+    )
     model = load_model()
 
     selected_indices = random.sample(

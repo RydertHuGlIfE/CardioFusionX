@@ -17,8 +17,8 @@ from model import ECGCNN
 
 SEED = 42
 BATCH_SIZE = 16
-EPOCHS = 50
-LEARNING_RATE = 0.00257
+EPOCHS = 18
+LEARNING_RATE = 0.00136
 FOCAL_GAMMA = 2.0
 SCHEDULER_PATIENCE = 3
 EARLY_STOPPING_PATIENCE = 8
@@ -158,7 +158,7 @@ def main():
 
     criterion = FocalLoss(
         gamma=FOCAL_GAMMA,
-        pos_weight=pos_weight.to(DEVICE),
+        pos_weight=pos_weight,
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
