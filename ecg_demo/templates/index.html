@@ -1,0 +1,75 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CardioFusionX ECG Demo</title>
+  <script src="{{ url_for('static', filename='plotly.min.js') }}"></script>
+  <style>
+    body { margin:0; font-family:Arial,sans-serif; background:#0f172a; color:#e2e8f0; }
+    .container { max-width:1200px; margin:30px auto; padding:0 18px; }
+    .card { background:#1e293b; border:1px solid #334155; border-radius:16px; padding:22px; margin-bottom:20px; }
+    h1 { margin-top:0; } .muted { color:#94a3b8; }
+    input,button { padding:12px; border-radius:9px; border:1px solid #475569; }
+    button { background:#38bdf8; cursor:pointer; font-weight:bold; }
+    .error { background:#7f1d1d; padding:12px; border-radius:8px; }
+    .prediction { display:flex; justify-content:space-between; gap:12px; padding:12px; background:#334155; border-radius:8px; margin:8px 0; }
+    .pill { color:#0f172a; background:#86efac; padding:4px 8px; border-radius:999px; font-weight:bold; }
+    #plot { width:100%; height:620px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <h1>CardioFusionX ECG Demo</h1>
+    <p class="muted">Upload a MATLAB .mat ECG sample containing <b>val</b> with shape (12, 5000).</p>
+    <form method="post" enctype="multipart/form-data">
+      <input type="file" name="ecg_file" accept=".mat" required>
+      <button type="submit">Analyze ECG</button>
+    </form>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  </div>
+
+  {% if result %}
+  <div class="card">
+    <h2>Prediction Results</h2>
+    <p class="muted">Threshold: {{ result.threshold }} | Checkpoint epoch: {{ result.epoch }} | Signal shape: {{ result.shape }}</p>
+    {% if result.predictions %}
+      {% for p in result.predictions %}
+      <div class="prediction">
+        <div><b>{{ p.name }}</b><br><span class="muted">{{ p.code }}</span></div>
+        <span class="pill">{{ "%.2f"|format(p.probability * 100) }}%</span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p>No diagnosis crossed the threshold.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>12-Lead ECG Plot</h2>
+    <div id="plot"></div>
+  </div>
+
+  <script>
+    const signal = {{ signal|tojson }};
+    const traces = signal.map((lead, i) => ({
+      x: Array.from({length: lead.length}, (_, j) => j),
+      y: lead,
+      mode: "lines",
+      name: "Lead " + (i + 1)
+    }));
+    Plotly.newPlot("plot", traces, {
+      template: "plotly_dark",
+      title: "Raw ECG Signal",
+      xaxis: {title: "Sample"},
+      yaxis: {title: "Amplitude"},
+      legend: {orientation: "h"},
+      margin: {t:50, l:55, r:20, b:55}
+    }, {responsive:true});
+  </script>
+  {% endif %}
+</div>
+</body>
+</html>
