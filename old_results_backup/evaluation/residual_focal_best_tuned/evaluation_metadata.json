@@ -1,0 +1,8 @@
+{
+  "model_path": "/run/media/Ryder/Coding/Coding/CardioFusionX/experiments/residual_focal_best/model.pth",
+  "checkpoint_epoch": 15,
+  "threshold_mode": "tuned (/run/media/Ryder/Coding/Coding/CardioFusionX/experiments/residual_focal_best/thresholds.json)",
+  "thresholds_path": "/run/media/Ryder/Coding/Coding/CardioFusionX/experiments/residual_focal_best/thresholds.json",
+  "number_of_test_samples": 6773,
+  "number_of_labels": 94
+}
