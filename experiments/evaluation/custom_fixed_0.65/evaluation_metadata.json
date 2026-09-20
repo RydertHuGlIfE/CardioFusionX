@@ -1,8 +1,0 @@
-{
-  "model_path": "experiments/residual_focal_latest/model.pth",
-  "checkpoint_epoch": 18,
-  "threshold_mode": "fixed (0.65)",
-  "thresholds_path": null,
-  "number_of_test_samples": 6773,
-  "number_of_labels": 94
-}
