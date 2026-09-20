@@ -70,6 +70,7 @@ instance/
 
 #addingn dataset to gitignore
 ecg-arrhythmia-data/
+experiments/
 
 # Sphinx documentation
 docs/_build/
