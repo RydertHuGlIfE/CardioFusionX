@@ -1,9 +1,0 @@
-{
-  "patient_id_check": "not available",
-  "duplicate_record_check": "passed",
-  "missing_value_check": "passed",
-  "split_sizes": {
-    "train": 31606,
-    "validation": 6773
-  }
-}

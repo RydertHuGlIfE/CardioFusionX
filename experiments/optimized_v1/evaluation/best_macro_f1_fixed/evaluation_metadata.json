@@ -1,8 +1,0 @@
-{
-  "model_path": "/run/media/Ryder/Coding/Coding/CardioFusionX/experiments/optimized_v1/best_macro_f1/model.pth",
-  "checkpoint_epoch": 26,
-  "threshold_mode": "fixed (0.5)",
-  "number_of_test_samples": 6773,
-  "number_of_labels": 94,
-  "test_split_used_only_for_final_evaluation": true
-}
