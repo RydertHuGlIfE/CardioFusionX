@@ -284,12 +284,11 @@ def main():
             dynamic_ncols=True,
             leave=True,
         )):
-            check_batch_finite(signals, labels, "train")
-            signals, labels = signals.to(DEVICE), labels.to(DEVICE)
-            if not torch.isfinite(signals).all():
+            if not torch.isfinite(signals).all() or not torch.isfinite(labels).all():
                 print(f"Skipping non-finite input at batch {batch_idx}")
                 optimizer.zero_grad(set_to_none=True)
                 continue
+            signals, labels = signals.to(DEVICE), labels.to(DEVICE)
             optimizer.zero_grad(set_to_none=True)
             with autocast(
                 device_type=DEVICE.type,
@@ -301,12 +300,16 @@ def main():
                 print(f"Skipping non-finite loss at batch {batch_idx}")
                 optimizer.zero_grad(set_to_none=True)
                 continue
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
+            if AMP_ENABLED:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+            else:
+                loss.backward()
+
             nonfinite_parameters, maximum_finite_gradient = gradient_diagnostics(model)
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(),
-                max_norm=1.0,
+                max_norm=GRADIENT_CLIP_MAX_NORM,
             )
             grad_value = float(grad_norm.item())
             if nonfinite_parameters > 0 or not np.isfinite(grad_value):
@@ -332,8 +335,11 @@ def main():
                 continue
             grad_total += grad_value
             clipped += int(grad_value > GRADIENT_CLIP_MAX_NORM)
-            scaler.step(optimizer)
-            scaler.update()
+            if AMP_ENABLED:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             total_loss += loss.item() * signals.size(0)
         train_loss = total_loss / len(train_loader.dataset)
         val_loss, y_val, p_val = collect_predictions(model, val_loader, criterion, "validation", scaler)
