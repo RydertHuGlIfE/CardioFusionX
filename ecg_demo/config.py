@@ -22,6 +22,11 @@ MODEL_CATALOG = {
         "architecture": "ecg_cnn",
         "path": BASE_DIR / "model.pth",
     },
+    "resnet_asl": {
+        "name": "ResNet-SE + Asymmetric Loss (ASL)",
+        "architecture": "ecg_resnet_se",
+        "path": PROJECT_ROOT / "models" / "ECG_model" / "model1.pth",
+    },
     "optimized_cnn": {
         "name": "Optimized ECGCNN",
         "architecture": "ecg_cnn",
@@ -79,5 +84,11 @@ def diagnosis_mapping():
 
 
 def label_display_name(label, mapping):
-    code = label.replace("label_", "")
-    return mapping.get(label, mapping.get(code, f"Code {code} (mapping unavailable)"))
+    if label in {None, ""}:
+        return "Unknown - Verify"
+    code = str(label).replace("label_", "")
+    if label in mapping:
+        return mapping[label]
+    if code in mapping:
+        return mapping[code]
+    return "Unknown - Verify"

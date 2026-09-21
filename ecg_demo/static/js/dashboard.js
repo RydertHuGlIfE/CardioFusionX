@@ -27,20 +27,33 @@
   const intensity = document.getElementById('noise-intensity');
   const noiseValue = document.getElementById('noise-value');
   intensity?.addEventListener('input', () => { noiseValue.textContent = Number(intensity.value).toFixed(2); });
+  const useCurrentSignal = () => Array.isArray(window.CFX_SIGNAL) && window.CFX_SIGNAL.length > 0;
   document.getElementById('stress-test')?.addEventListener('click', async () => {
     const output = document.getElementById('stress-output');
-    if (!fileInput.files[0]) { output.textContent = 'Keep the uploaded file selected to run a comparison.'; return; }
+    if (!fileInput.files[0] && !useCurrentSignal()) { output.textContent = 'Keep the uploaded file selected or analyze a signal first to run a comparison.'; return; }
     output.textContent = 'Running controlled comparison...';
-    const body = new FormData(); body.append('ecg_file', fileInput.files[0]); body.append('noise_type', document.getElementById('noise-type').value); body.append('intensity', intensity.value); body.append('model_key', window.CFX_RESULT.model.key); body.append('threshold_strategy', window.CFX_RESULT.threshold_strategy);
-    const response = await fetch('/api/stress-test', { method: 'POST', body }); const data = await response.json();
+    if (fileInput.files[0]) {
+      const body = new FormData(); body.append('ecg_file', fileInput.files[0]); body.append('noise_type', document.getElementById('noise-type').value); body.append('intensity', intensity.value); body.append('model_key', window.CFX_RESULT.model.key); body.append('threshold_strategy', window.CFX_RESULT.threshold_strategy);
+      const response = await fetch('/api/stress-test', { method: 'POST', body }); const data = await response.json();
+      output.textContent = data.error || `${data.changed_labels.length} labels changed by the controlled ${data.noise_type} perturbation. Quality: ${data.quality_before.status} -> ${data.quality_after.status}.`;
+      return;
+    }
+    const payload = { signal: window.CFX_SIGNAL, filename: 'current-signal.mat', noise_type: document.getElementById('noise-type').value, intensity: intensity.value, model_key: window.CFX_RESULT.model.key, threshold_strategy: window.CFX_RESULT.threshold_strategy };
+    const response = await fetch('/api/stress-test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await response.json();
     output.textContent = data.error || `${data.changed_labels.length} labels changed by the controlled ${data.noise_type} perturbation. Quality: ${data.quality_before.status} -> ${data.quality_after.status}.`;
   });
   document.getElementById('counterfactual')?.addEventListener('click', async () => {
     const output = document.getElementById('counter-output');
-    if (!fileInput.files[0]) { output.textContent = 'Keep the uploaded file selected to run a comparison.'; return; }
+    if (!fileInput.files[0] && !useCurrentSignal()) { output.textContent = 'Keep the uploaded file selected or analyze a signal first to run a comparison.'; return; }
     output.textContent = 'Comparing modified segment...';
-    const body = new FormData(); body.append('ecg_file', fileInput.files[0]); body.append('start', document.getElementById('counter-start').value); body.append('end', document.getElementById('counter-end').value); body.append('model_key', window.CFX_RESULT.model.key); body.append('threshold_strategy', window.CFX_RESULT.threshold_strategy);
-    const response = await fetch('/api/counterfactual', { method: 'POST', body }); const data = await response.json();
+    if (fileInput.files[0]) {
+      const body = new FormData(); body.append('ecg_file', fileInput.files[0]); body.append('start', document.getElementById('counter-start').value); body.append('end', document.getElementById('counter-end').value); body.append('model_key', window.CFX_RESULT.model.key); body.append('threshold_strategy', window.CFX_RESULT.threshold_strategy);
+      const response = await fetch('/api/counterfactual', { method: 'POST', body }); const data = await response.json();
+      output.textContent = data.error || `Prediction changed after signal modification in samples ${data.start_sample}-${data.end_sample}. ${data.changed_labels.length} labels changed. This is not a causal explanation.`;
+      return;
+    }
+    const payload = { signal: window.CFX_SIGNAL, filename: 'current-signal.mat', start: document.getElementById('counter-start').value, end: document.getElementById('counter-end').value, model_key: window.CFX_RESULT.model.key, threshold_strategy: window.CFX_RESULT.threshold_strategy };
+    const response = await fetch('/api/counterfactual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await response.json();
     output.textContent = data.error || `Prediction changed after signal modification in samples ${data.start_sample}-${data.end_sample}. ${data.changed_labels.length} labels changed. This is not a causal explanation.`;
   });
 })();

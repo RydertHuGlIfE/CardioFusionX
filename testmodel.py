@@ -37,15 +37,19 @@ def load_diagnosis_mapping():
 
 
 def get_label_display_name(label_key, mapping):
+    if label_key in {None, ""}:
+        return "Unknown - Verify"
     clean_code = str(label_key).replace("label_", "")
-    return mapping.get(label_key, mapping.get(clean_code, label_key))
+    if label_key in mapping:
+        return mapping[label_key]
+    if clean_code in mapping:
+        return mapping[clean_code]
+    return "Unknown - Verify"
 
 
 def resolve_default_model():
     candidates = [
-        PROJECT_ROOT / "experiments/final_training_v1/best_macro_f1/model.pth",
-        PROJECT_ROOT / "experiments/optimized_v1/best_macro_f1/model.pth",
-        PROJECT_ROOT / "experiments/targeted_finetune_v1/best_macro_f1/model.pth",
+        PROJECT_ROOT / "/run/media/Ryder/Coding/Coding/CardioFusionX/models/ECG_model/model1.pth",
     ]
     for c in candidates:
         if c.is_file():

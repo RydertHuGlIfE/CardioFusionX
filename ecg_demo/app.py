@@ -15,6 +15,10 @@ from patient_history import load_history_artifact, PatientHistoryError, predict_
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+MODEL_PATH = Path("/run/media/Ryder/Coding/Coding/CardioFusionX/models/ECG_model/model1.pth")
+THRESHOLD_PATH = Path("/run/media/Ryder/Coding/Coding/CardioFusionX/models/ECG_model/thresholds.json")
+app.config["MODEL_PATH"] = str(MODEL_PATH)
+app.config["THRESHOLD_PATH"] = str(THRESHOLD_PATH)
 
 try:
     LABELS = canonical_labels()
@@ -50,8 +54,8 @@ def index():
     if request.method == "GET":
         return render_dashboard()
     uploaded = request.files.get("ecg_file")
-    model_key = request.form.get("model_key", "optimized_cnn")
-    strategy = request.form.get("threshold_strategy", "tuned")
+    model_key = request.form.get("model_key") or ("resnet_asl" if MODEL_PATH.is_file() else "optimized_cnn")
+    strategy = request.form.get("threshold_strategy") or ("tuned" if THRESHOLD_PATH.is_file() else "fixed")
     STATS["uploaded"] += 1
     if not uploaded or not uploaded.filename:
         return render_dashboard("Please upload a .mat ECG file.")
@@ -92,11 +96,22 @@ def predict_history_route():
 def stress_test():
     try:
         uploaded = request.files.get("ecg_file")
-        noise_type = request.form.get("noise_type", "gaussian")
-        intensity = float(request.form.get("intensity", "0.3"))
-        raw_signal, filename = read_mat_upload(uploaded)
-        model_key = request.form.get("model_key", "optimized_cnn")
-        strategy = request.form.get("threshold_strategy", "tuned")
+        payload = request.get_json(silent=True) or {}
+        noise_type = request.form.get("noise_type", payload.get("noise_type", "gaussian"))
+        intensity = float(request.form.get("intensity", payload.get("intensity", "0.3")))
+        if uploaded and uploaded.filename:
+            raw_signal, filename = read_mat_upload(uploaded)
+        elif payload.get("signal") is not None:
+            raw_signal = np.asarray(payload["signal"], dtype=np.float32)
+            if raw_signal.shape != (12, 5000):
+                raise ValueError("Signal payload must be shaped (12, 5000).")
+            if not np.isfinite(raw_signal).all():
+                raise ValueError("Signal payload contains invalid numeric values.")
+            filename = payload.get("filename", "current-signal.mat")
+        else:
+            raise ValueError("Please upload a .mat ECG file or provide a valid signal payload.")
+        model_key = request.form.get("model_key") or payload.get("model_key") or ("resnet_asl" if MODEL_PATH.is_file() else "optimized_cnn")
+        strategy = request.form.get("threshold_strategy") or payload.get("threshold_strategy") or ("tuned" if THRESHOLD_PATH.is_file() else "fixed")
         model, info = load_model(model_key, LABELS)
         thresholds, _ = load_thresholds(LABELS, info["path"], strategy)
         original = predict_signal(model, normalize_signal(raw_signal), LABELS, thresholds, MAPPING, info, strategy)
@@ -111,16 +126,26 @@ def stress_test():
 def counterfactual():
     try:
         uploaded = request.files.get("ecg_file")
-        raw_signal, _ = read_mat_upload(uploaded)
-        start = max(0, int(request.form.get("start", 0)))
-        end = min(raw_signal.shape[1], int(request.form.get("end", raw_signal.shape[1])))
+        payload = request.get_json(silent=True) or {}
+        if uploaded and uploaded.filename:
+            raw_signal, _ = read_mat_upload(uploaded)
+        elif payload.get("signal") is not None:
+            raw_signal = np.asarray(payload["signal"], dtype=np.float32)
+            if raw_signal.shape != (12, 5000):
+                raise ValueError("Signal payload must be shaped (12, 5000).")
+            if not np.isfinite(raw_signal).all():
+                raise ValueError("Signal payload contains invalid numeric values.")
+        else:
+            raise ValueError("Please upload a .mat ECG file or provide a valid signal payload.")
+        start = max(0, int(request.form.get("start", payload.get("start", 0))))
+        end = min(raw_signal.shape[1], int(request.form.get("end", payload.get("end", raw_signal.shape[1]))))
         if start >= end:
             raise ValueError("Counterfactual segment must have a positive duration.")
         modified = raw_signal.copy()
         replacement = np.mean(modified[:, max(0, start - 1):min(modified.shape[1], end + 1)], axis=1, keepdims=True)
         modified[:, start:end] = replacement
-        model_key = request.form.get("model_key", "optimized_cnn")
-        strategy = request.form.get("threshold_strategy", "tuned")
+        model_key = request.form.get("model_key") or payload.get("model_key") or ("resnet_asl" if MODEL_PATH.is_file() else "optimized_cnn")
+        strategy = request.form.get("threshold_strategy") or payload.get("threshold_strategy") or ("tuned" if THRESHOLD_PATH.is_file() else "fixed")
         model, info = load_model(model_key, LABELS)
         thresholds, _ = load_thresholds(LABELS, info["path"], strategy)
         original = predict_signal(model, normalize_signal(raw_signal), LABELS, thresholds, MAPPING, info, strategy)

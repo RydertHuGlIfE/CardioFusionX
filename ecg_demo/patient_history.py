@@ -44,20 +44,30 @@ class PatientHistoryError(ValueError):
 def artifact_paths(artifact_dir: Path = ARTIFACT_DIR) -> dict[str, Path]:
     return {
         "model": artifact_dir / "patient_history_model.joblib",
+        "legacy_model": artifact_dir / "model1.pth",
         "metadata": artifact_dir / "feature_metadata.json",
         "metrics": artifact_dir / "metrics.json",
         "config": artifact_dir / "training_config.json",
     }
 
 
+def resolve_history_model_path(artifact_dir: Path = ARTIFACT_DIR) -> Path:
+    paths = artifact_paths(artifact_dir)
+    for candidate in (paths["model"], paths["legacy_model"]):
+        if candidate.is_file():
+            return candidate
+    return paths["model"]
+
+
 def load_history_artifact(artifact_dir: Path = ARTIFACT_DIR):
     paths = artifact_paths(artifact_dir)
-    if not paths["model"].is_file():
-        return None, {"available": False, "message": f"Patient-history model not trained. Expected {paths['model']}"}
+    model_path = resolve_history_model_path(artifact_dir)
+    if not model_path.is_file():
+        return None, {"available": False, "message": f"Patient-history model not trained. Expected {model_path}"}
     try:
-        model = joblib.load(paths["model"])
+        model = joblib.load(model_path)
         metadata = json.loads(paths["metadata"].read_text()) if paths["metadata"].is_file() else {}
-        return model, {"available": True, **metadata, "artifact_dir": str(artifact_dir)}
+        return model, {"available": True, **metadata, "artifact_dir": str(artifact_dir), "artifact_path": str(model_path)}
     except Exception as exc:
         return None, {"available": False, "message": f"Could not load patient-history model: {exc}"}
 

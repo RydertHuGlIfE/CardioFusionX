@@ -29,7 +29,7 @@
             <label class="dropzone" for="ecg_file"><span class="upload-icon">+</span><strong id="file-name">Choose ECG file</strong><small>Secure in-memory processing · up to 25 MB</small></label>
             <input id="ecg_file" type="file" name="ecg_file" accept=".mat" required>
             <div class="control-grid">
-              <label>Model<select name="model_key" id="model-key">{% for key, model in model_options.items() %}<option value="{{ key }}" {% if (result and result.model.key == key) or (not result and key == 'optimized_cnn') %}selected{% endif %}>{{ model.name }}{% if not model.available %} (missing){% endif %}</option>{% endfor %}</select></label>
+              <label>Model<select name="model_key" id="model-key">{% for key, model in model_options.items() %}<option value="{{ key }}" {% if (result and result.model.key == key) or (not result and key == 'resnet_asl') %}selected{% endif %}>{{ model.name }}{% if not model.available %} (missing){% endif %}</option>{% endfor %}</select></label>
               <label>Threshold strategy<select name="threshold_strategy" id="threshold-strategy"><option value="fixed">Fixed 0.50</option><option value="tuned" {% if not result or result.threshold_strategy == 'tuned' %}selected{% endif %}>F1-oriented tuned</option><option value="conservative" {% if result and result.threshold_strategy == 'conservative' %}selected{% endif %}>Conservative</option><option value="f1">F1-oriented alias</option></select></label>
             </div>
             <button class="primary" type="submit">Analyze signal <span>→</span></button>
