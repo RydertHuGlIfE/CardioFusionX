@@ -1,4 +1,4 @@
-# CardioFusionX
+# CardioFusionX - ECG
 
 ## Patient History Risk Module
 
